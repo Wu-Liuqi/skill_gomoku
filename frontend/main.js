@@ -43,6 +43,123 @@ const SKILL_META = {
   }
 };
 
+// TTS音频管理器
+class TTSAudioManager {
+  constructor() {
+    this.enabled = localStorage.getItem('skills-gomoku-audio') !== 'false';
+    this.volume = 0.7;
+    this.rate = 1.0;
+    this.pitch = 1.0;
+    this.voice = null;
+    this.initVoice();
+  }
+
+  initVoice() {
+    const setVoice = () => {
+      const voices = speechSynthesis.getVoices();
+      // 优先选择中文语音
+      this.voice = voices.find(voice =>
+        voice.lang.includes('zh') || voice.lang.includes('CN')
+      ) || voices[0];
+    };
+
+    if (speechSynthesis.getVoices().length) {
+      setVoice();
+    } else {
+      speechSynthesis.onvoiceschanged = setVoice;
+    }
+  }
+
+  playSkillSound(skillId) {
+    if (!this.enabled || !('speechSynthesis' in window)) return;
+
+    const skillNames = {
+      'flying-sand': '飞沙走石',
+      'calm-water': '静如止水',
+      'yale-ya': '呀嘞呀',
+      'capture': '擒拿擒拿',
+      'rewind': '时光倒流',
+      'reset-board': '力拔山兮',
+      'restore': '东山再起',
+      'see-you-again': 'See you again'
+    };
+
+    const text = skillNames[skillId];
+    if (!text) return;
+
+    // 停止当前播放的语音
+    speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.volume = this.volume;
+    utterance.rate = this.rate;
+    utterance.pitch = this.pitch;
+
+    if (this.voice) {
+      utterance.voice = this.voice;
+    }
+
+    speechSynthesis.speak(utterance);
+  }
+
+  playMoveSound() {
+    if (!this.enabled || !('speechSynthesis' in window)) return;
+
+    // 停止当前播放的语音
+    speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance('嘿');
+    utterance.volume = this.volume;
+    utterance.rate = this.rate + 0.2; // 落子音效稍快一些
+    utterance.pitch = this.pitch;
+
+    if (this.voice) {
+      utterance.voice = this.voice;
+    }
+
+    speechSynthesis.speak(utterance);
+  }
+
+  playVictorySound(winner) {
+    if (!this.enabled || !('speechSynthesis' in window)) return;
+
+    const victoryTexts = {
+      black: "黑棋获胜",
+      white: "白棋获胜"
+    };
+
+    const text = victoryTexts[winner];
+    if (!text) return;
+
+    // 停止当前播放的语音
+    speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.volume = this.volume;
+    utterance.rate = this.rate - 0.1; // 胜利音效稍慢一些，更庄重
+    utterance.pitch = this.pitch + 0.1; // 稍微提高音调，表示喜悦
+
+    if (this.voice) {
+      utterance.voice = this.voice;
+    }
+
+    speechSynthesis.speak(utterance);
+  }
+
+  toggle() {
+    this.enabled = !this.enabled;
+    localStorage.setItem('skills-gomoku-audio', this.enabled.toString());
+    return this.enabled;
+  }
+
+  isEnabled() {
+    return this.enabled;
+  }
+}
+
+// 创建全局音频管理器实例
+const audioManager = new TTSAudioManager();
+
 const RULES_HTML = `
   <p>• 棋盘为15×15，黑棋（子琪）先行，任意直线上率先连成五子者胜。</p>
   <p>• 玩家共享 8 个一次性技能，每个技能具有不同冷却与效果：</p>
@@ -68,6 +185,7 @@ const elements = {
   boardCanvas: document.getElementById('board-canvas'),
   restartBtn: document.getElementById('restart-btn'),
   rulesBtn: document.getElementById('rules-btn'),
+  audioToggleBtn: document.getElementById('audio-toggle-btn'),
   turnNumber: document.getElementById('turn-number'),
   moveCount: document.getElementById('move-count'),
   gameStatus: document.getElementById('game-status'),
@@ -115,6 +233,7 @@ function init() {
   connectSocket();
   adjustCanvasSize();
   drawBoard();
+  updateAudioToggleButton(); // 初始化音效按钮状态
   window.requestAnimationFrame(() => {
     adjustCanvasSize();
     drawBoard();
@@ -137,6 +256,7 @@ function wireEvents() {
   elements.copyRoom.addEventListener('click', copyRoomLink);
   elements.restartBtn.addEventListener('click', handleRestart);
   elements.rulesBtn.addEventListener('click', showRules);
+  elements.audioToggleBtn.addEventListener('click', handleAudioToggle);
   elements.modalClose.addEventListener('click', hideModal);
   elements.modal.addEventListener('click', (evt) => {
     if (evt.target === elements.modal) {
@@ -149,6 +269,8 @@ function wireEvents() {
     canvas.addEventListener('click', handleBoardClick);
 
     const supportsPointer = typeof window.PointerEvent === 'function';
+    const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
     if (supportsPointer) {
       canvas.addEventListener('pointermove', handleBoardHover, { passive: true });
       canvas.addEventListener('pointerdown', handleBoardHover);
@@ -156,13 +278,17 @@ function wireEvents() {
     } else {
       canvas.addEventListener('mousemove', handleBoardHover);
       canvas.addEventListener('mouseleave', clearHoverCell);
-      canvas.addEventListener('touchstart', handleBoardHover, { passive: true });
-      canvas.addEventListener('touchmove', handleBoardHover, { passive: true });
-      canvas.addEventListener('touchend', clearHoverCell, { passive: true });
-      canvas.addEventListener('touchcancel', clearHoverCell, { passive: true });
+
+      // 为触摸设备优化事件处理
+      if (isTouchDevice) {
+        canvas.addEventListener('touchstart', handleBoardHover, { passive: false });
+        canvas.addEventListener('touchmove', handleBoardHover, { passive: false });
+        canvas.addEventListener('touchend', clearHoverCell, { passive: true });
+        canvas.addEventListener('touchcancel', clearHoverCell, { passive: true });
+      }
     }
 
-    if (window.ResizeObserver && canvas.parentElement) {
+    if (window.ResizeObserver) {
       if (state.resizeObserver) {
         state.resizeObserver.disconnect();
       }
@@ -170,7 +296,29 @@ function wireEvents() {
         adjustCanvasSize();
         drawBoard();
       });
-      state.resizeObserver.observe(canvas.parentElement);
+
+      // 观察多个元素以确保棋盘大小与其他元素保持一致
+      if (canvas.parentElement) {
+        state.resizeObserver.observe(canvas.parentElement);
+      }
+
+      // 观察app容器
+      const appShell = document.querySelector('.app-shell');
+      if (appShell) {
+        state.resizeObserver.observe(appShell);
+      }
+
+      // 观察技能面板
+      const skillsPanel = document.querySelector('.skills-panel');
+      if (skillsPanel) {
+        state.resizeObserver.observe(skillsPanel);
+      }
+
+      // 观察玩家卡片容器
+      const playersContainer = document.querySelector('.players-banner');
+      if (playersContainer) {
+        state.resizeObserver.observe(playersContainer);
+      }
     }
   }
 
@@ -318,6 +466,10 @@ function handleSocketMessage(event) {
       applyJoinResult(payload);
       break;
     case 'state':
+      // 检查是否有技能被使用，播放对应音效
+      if (payload.lastEvent?.type === 'skill' && payload.lastEvent.skillId) {
+        audioManager.playSkillSound(payload.lastEvent.skillId);
+      }
       applyGameState(payload);
       break;
     case 'error':
@@ -373,7 +525,7 @@ function applyGameState(gameState) {
   if (!gameState) {
     return;
   }
-  
+
   const previousGame = state.game;
   state.game = gameState;
 
@@ -471,6 +623,18 @@ function legacyCopy(text) {
   } finally {
     document.body.removeChild(temp);
   }
+}
+
+function handleAudioToggle() {
+  const enabled = audioManager.toggle();
+  updateAudioToggleButton();
+  showToast(enabled ? '音效已开启' : '音效已关闭', 'info');
+}
+
+function updateAudioToggleButton() {
+  const enabled = audioManager.isEnabled();
+  elements.audioToggleBtn.textContent = enabled ? '🔊 音效' : '🔇 音效';
+  elements.audioToggleBtn.classList.toggle('disabled', !enabled);
 }
 
 function showToast(message, variant = 'info', duration = 3200) {
@@ -614,6 +778,8 @@ function handleSkillClick(skill) {
 
   const meta = SKILL_META[skill.id];
   if (!meta) {
+    // 播放技能音效
+    audioManager.playSkillSound(skill.id);
     // 触发技能特效
     EffectManager.createSkillEffect(skill.id);
     sendMessage('skill', { skillId: skill.id });
@@ -634,6 +800,8 @@ function handleSkillClick(skill) {
       showToast('请输入合法的回合号', 'warning');
       return;
     }
+    // 播放技能音效
+    audioManager.playSkillSound(skill.id);
     // 触发技能特效
     EffectManager.createSkillEffect(skill.id);
     sendMessage('skill', { skillId: skill.id, data: { turnNumber: parsed } });
@@ -645,6 +813,8 @@ function handleSkillClick(skill) {
     return;
   }
 
+  // 播放技能音效
+  audioManager.playSkillSound(skill.id);
   // 触发技能特效
   EffectManager.createSkillEffect(skill.id);
   sendMessage('skill', { skillId: skill.id });
@@ -694,6 +864,8 @@ function computeValidTargets(meta) {
 function handleBoardClick(event) {
   const cell = locateCell(event);
   if (!cell) {
+    // 在开发模式下，可以取消注释下面的代码来调试触摸精度
+    // console.log('No cell located for event:', event.type, getInputPoint(event));
     return;
   }
 
@@ -712,6 +884,8 @@ function handleBoardClick(event) {
     return;
   }
 
+  // 播放落子音效
+  audioManager.playMoveSound();
   sendMessage('move', cell);
 }
 
@@ -739,11 +913,13 @@ function handleSelectionClick(cell) {
   }
 
   if (selection.targets.length > 0 && (!selection.meta.maxTargets || selection.targets.length === selection.meta.maxTargets)) {
+    // 播放技能音效
+    audioManager.playSkillSound(selection.skill.id);
     // 在每个目标位置创建特效
     selection.targets.forEach(target => {
       EffectManager.createSkillEffect(selection.skill.id, target.x, target.y);
     });
-    
+
     sendMessage('skill', {
       skillId: selection.skill.id,
       data: { positions: selection.targets }
@@ -756,17 +932,33 @@ function handleSelectionClick(cell) {
 }
 
 function handleBoardHover(event) {
+  // 多点触摸时忽略
   if (event?.touches && event.touches.length > 1) {
     return;
   }
+
+  // Pointer事件的非主要触摸点忽略
   if (typeof event?.isPrimary === 'boolean' && event.isPrimary === false) {
     return;
   }
+
+  // 对于触摸设备，在touchstart时提供即时反馈
+  const isTouchStart = event.type === 'touchstart';
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    window.innerWidth <= 768 ||
+    ('ontouchstart' in window);
+
   const cell = locateCell(event);
   const changed = (state.hoverCell?.x !== cell?.x) || (state.hoverCell?.y !== cell?.y);
+
   if (changed) {
     state.hoverCell = cell;
     drawBoard();
+
+    // 移动设备上的触摸反馈
+    if (isMobile && isTouchStart && cell && navigator.vibrate) {
+      navigator.vibrate(10); // 轻微震动反馈
+    }
   }
 }
 
@@ -783,15 +975,22 @@ function getInputPoint(event) {
   if (!event) {
     return null;
   }
+
+  // 优先处理触摸事件，确保获取正确的触摸点
   if (event.touches && event.touches.length > 0) {
     return event.touches[0];
   }
+
+  // 处理触摸结束事件
   if (event.changedTouches && event.changedTouches.length > 0) {
     return event.changedTouches[0];
   }
+
+  // 处理鼠标事件
   if (typeof event.clientX === 'number' && typeof event.clientY === 'number') {
     return event;
   }
+
   return null;
 }
 
@@ -804,29 +1003,49 @@ function locateCell(event) {
   if (!point) {
     return null;
   }
+
+  // 获取更精确的边界矩形
   const rect = canvas.getBoundingClientRect();
   const size = rect.width;
   if (!Number.isFinite(size) || size <= 0) {
     return null;
   }
+
   const gap = (size - BOARD_PADDING * 2) / (BOARD_SIZE - 1);
   if (!Number.isFinite(gap) || gap <= 0) {
     return null;
   }
+
+  // 计算相对坐标，考虑可能的滚动偏移
   const relativeX = (point.clientX - rect.left) - BOARD_PADDING;
   const relativeY = (point.clientY - rect.top) - BOARD_PADDING;
+
   const x = relativeX / gap;
   const y = relativeY / gap;
   const gridX = Math.round(x);
   const gridY = Math.round(y);
+
+  // 边界检查
   if (gridX < 0 || gridX >= BOARD_SIZE || gridY < 0 || gridY >= BOARD_SIZE) {
     return null;
   }
+
+  // 动态调整容差：移动设备使用更大的容差，桌面设备使用较小的容差
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    window.innerWidth <= 768 ||
+    ('ontouchstart' in window);
+
+  // 根据gap大小和设备类型调整容差
+  const baseTolerance = isMobile ? 0.6 : 0.4;
+  const tolerance = Math.min(baseTolerance, gap / 20); // 确保容差不会太大
+
   const dx = Math.abs(gridX - x);
   const dy = Math.abs(gridY - y);
-  if (dx > 0.4 || dy > 0.4) {
+
+  if (dx > tolerance || dy > tolerance) {
     return null;
   }
+
   return { x: gridX, y: gridY };
 }
 
@@ -836,17 +1055,45 @@ function adjustCanvasSize() {
     return;
   }
 
-  const parent = canvas.parentElement;
-  const fallbackWidth = canvas.clientWidth || 320;
-  const parentWidth = parent ? parent.clientWidth : 0;
-  const measuredWidth = canvas.getBoundingClientRect().width || fallbackWidth;
-  const baseWidth = Math.max(220, parentWidth > 0 ? parentWidth : measuredWidth);
-  let size = Math.min(baseWidth, 640);
+  // 获取容器宽度作为基准
+  const appShell = document.querySelector('.app-shell');
+  const skillsPanel = elements.skillGrid?.parentElement;
+  const playersContainer = document.querySelector('.players-banner');
 
-  if (!Number.isFinite(size) || size <= 0) {
-    size = Math.min(Math.max(baseWidth, 220), 320);
+  let targetWidth = 0;
+
+  // 优先使用技能面板宽度作为参考
+  if (skillsPanel) {
+    targetWidth = skillsPanel.getBoundingClientRect().width;
+  }
+  // 其次使用玩家卡片容器宽度
+  else if (playersContainer) {
+    targetWidth = playersContainer.getBoundingClientRect().width;
+  }
+  // 最后使用app容器宽度
+  else if (appShell) {
+    targetWidth = appShell.getBoundingClientRect().width - 80; // 减去padding
   }
 
+  // 如果都获取不到，使用父容器宽度
+  if (!targetWidth || targetWidth <= 0) {
+    const parent = canvas.parentElement;
+    const parentWidth = parent ? parent.clientWidth : 0;
+    targetWidth = parentWidth > 0 ? parentWidth : 400;
+  }
+
+  // 减去棋盘容器的padding
+  const boardSection = canvas.closest('.board-section');
+  if (boardSection) {
+    const computedStyle = window.getComputedStyle(boardSection);
+    const paddingLeft = parseFloat(computedStyle.paddingLeft) || 0;
+    const paddingRight = parseFloat(computedStyle.paddingRight) || 0;
+    targetWidth = Math.max(220, targetWidth - paddingLeft - paddingRight);
+  }
+
+  let size = targetWidth;
+
+  // 移动端适配
   const isCompact = window.innerWidth <= 720;
   if (isCompact) {
     const viewportHeight = (window.visualViewport && window.visualViewport.height) || window.innerHeight || size;
@@ -856,7 +1103,8 @@ function adjustCanvasSize() {
     size = Math.min(size, mobileLimit);
   }
 
-  size = Math.max(220, size);
+  // 设置最小和最大尺寸限制
+  size = Math.max(220, Math.min(size, 800));
 
   const dpr = window.devicePixelRatio || 1;
   canvas.style.maxWidth = '100%';
@@ -1085,9 +1333,9 @@ function countPlacedStones(board) {
 
 // 移动设备检测
 function isMobileDevice() {
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
-         window.innerWidth <= 768 ||
-         ('ontouchstart' in window);
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    window.innerWidth <= 768 ||
+    ('ontouchstart' in window);
 }
 
 // 特效管理器
@@ -1105,16 +1353,16 @@ const EffectManager = {
       'restore': '东山再起',
       'see-you-again': 'See you again'
     };
-    
+
     const skillName = skillNames[skillId] || skillId;
-    
+
     // 创建飞字特效
     this.createSkillFlyText(skillName, x, y);
-    
+
     // 创建原有的特效
     const effect = document.createElement('div');
     effect.className = `skill-effect ${skillId}`;
-    
+
     // 如果提供了坐标，在该位置显示特效
     if (x !== null && y !== null) {
       const canvas = elements.boardCanvas;
@@ -1123,7 +1371,7 @@ const EffectManager = {
       const gap = (size - BOARD_PADDING * 2) / (BOARD_SIZE - 1);
       const pixelX = rect.left + BOARD_PADDING + x * gap;
       const pixelY = rect.top + BOARD_PADDING + y * gap;
-      
+
       effect.style.left = `${pixelX - 25}px`;
       effect.style.top = `${pixelY - 25}px`;
       effect.style.width = '50px';
@@ -1136,9 +1384,9 @@ const EffectManager = {
       effect.style.width = '100px';
       effect.style.height = '100px';
     }
-    
+
     elements.effectOverlay.appendChild(effect);
-    
+
     // 800ms后移除特效
     setTimeout(() => {
       if (effect.parentNode) {
@@ -1152,9 +1400,9 @@ const EffectManager = {
     const flyText = document.createElement('div');
     flyText.className = 'skill-fly-text';
     flyText.textContent = skillName;
-    
+
     let startX, startY;
-    
+
     // 如果提供了棋盘坐标，从该位置开始
     if (x !== null && y !== null) {
       const canvas = elements.boardCanvas;
@@ -1170,21 +1418,21 @@ const EffectManager = {
       startX = viewportWidth / 2;
       startY = viewportHeight / 2;
     }
-    
+
     // 确保起始位置在视口内
     startX = Math.max(50, Math.min(startX, (window.innerWidth || 320) - 50));
     startY = Math.max(50, Math.min(startY, (window.innerHeight || 568) - 50));
-    
+
     flyText.style.left = startX + 'px';
     flyText.style.top = startY + 'px';
-    
+
     elements.effectOverlay.appendChild(flyText);
-    
+
     // 触发动画
     requestAnimationFrame(() => {
       flyText.classList.add('animate');
     });
-    
+
     // 动画结束后移除元素
     setTimeout(() => {
       if (flyText.parentNode) {
@@ -1196,27 +1444,30 @@ const EffectManager = {
   // 创建获胜特效
   createVictoryEffect(winner) {
     const winnerName = state.game?.players?.[winner]?.displayName || (winner === 'black' ? '子琪' : '张呈');
-    
+
+    // 播放胜利音效
+    audioManager.playVictorySound(winner);
+
     // 创建获胜弹窗
     this.createVictoryModal(winner, winnerName);
-    
+
     // 背景闪光
     const victoryBg = document.createElement('div');
     victoryBg.className = 'victory-effect';
     elements.effectOverlay.appendChild(victoryBg);
-    
+
     // 烟花特效（移动端延迟启动以避免性能问题）
     const delay = isMobileDevice() ? 300 : 0;
     setTimeout(() => {
       this.createFireworks();
     }, delay);
-    
+
     // 震动效果（移动端支持触觉反馈）
     if (isMobileDevice() && navigator.vibrate) {
       navigator.vibrate([200, 100, 200]);
     }
     document.body.classList.add('shake-effect');
-    
+
     setTimeout(() => {
       if (victoryBg.parentNode) {
         victoryBg.parentNode.removeChild(victoryBg);
@@ -1229,10 +1480,10 @@ const EffectManager = {
   createVictoryModal(winner, winnerName) {
     const modal = document.createElement('div');
     modal.className = 'victory-modal';
-    
+
     const winnerText = winner === 'black' ? '黑棋获胜' : '白棋获胜';
     const winnerEmoji = winner === 'black' ? '⚫' : '⚪';
-    
+
     modal.innerHTML = `
       <div class="victory-content">
         <div class="victory-crown">${winnerEmoji}</div>
@@ -1256,15 +1507,15 @@ const EffectManager = {
         </button>
       </div>
     `;
-    
+
     elements.effectOverlay.appendChild(modal);
-    
+
     // 添加点击事件监听器
     const closeButton = modal.querySelector('.victory-close');
     closeButton.addEventListener('click', () => {
       this.closeVictoryModal();
     });
-    
+
     // 触发动画
     requestAnimationFrame(() => {
       modal.classList.add('show');
@@ -1288,7 +1539,7 @@ const EffectManager = {
   createFireworks() {
     const colors = ['gold', 'red', 'blue', 'green'];
     const isMobile = window.innerWidth <= 768;
-    
+
     // 移动端减少烟花数量和位置
     const positions = isMobile ? [
       { x: '25%', y: '35%' },
@@ -1312,15 +1563,15 @@ const EffectManager = {
           firework.className = `firework ${colors[Math.floor(Math.random() * colors.length)]}`;
           firework.style.left = pos.x;
           firework.style.top = pos.y;
-          
+
           // 随机方向，移动端距离更小
           const angle = (i * (360 / fireworkCount)) * Math.PI / 180;
           const distance = (maxDistance * 0.7) + Math.random() * (maxDistance * 0.3);
           firework.style.setProperty('--dx', `${Math.cos(angle) * distance}px`);
           firework.style.setProperty('--dy', `${Math.sin(angle) * distance}px`);
-          
+
           elements.effectOverlay.appendChild(firework);
-          
+
           setTimeout(() => {
             if (firework.parentNode) {
               firework.parentNode.removeChild(firework);
@@ -1335,7 +1586,7 @@ const EffectManager = {
   createParticles(x, y, color = '#ffd700', count = 6) {
     const canvas = elements.boardCanvas;
     if (!canvas) return;
-    
+
     const rect = canvas.getBoundingClientRect();
     const size = rect.width;
     const gap = (size - BOARD_PADDING * 2) / (BOARD_SIZE - 1);
@@ -1351,18 +1602,18 @@ const EffectManager = {
       const particle = document.createElement('div');
       particle.className = 'particle';
       particle.style.backgroundColor = color;
-      
+
       // 确保粒子位置在视口内
       const offsetX = (Math.random() - 0.5) * spreadRange;
       const offsetY = (Math.random() - 0.5) * spreadRange;
       const finalX = Math.max(5, Math.min(pixelX + offsetX, window.innerWidth - 5));
       const finalY = Math.max(5, Math.min(pixelY + offsetY, window.innerHeight - 5));
-      
+
       particle.style.left = `${finalX}px`;
       particle.style.top = `${finalY}px`;
-      
+
       elements.effectOverlay.appendChild(particle);
-      
+
       setTimeout(() => {
         if (particle.parentNode) {
           particle.parentNode.removeChild(particle);

@@ -67,6 +67,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: clamp(18px, 2.6vw, 28px);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .app-header {
@@ -198,6 +200,7 @@ button.secondary:hover {
   justify-content: center;
   align-items: center;
   gap: clamp(8px, 2vw, 16px);
+  width: 100%;
 }
 
 .player-card {
@@ -275,10 +278,12 @@ button.secondary:hover {
 .board-stage {
   display: flex;
   justify-content: center;
+  width: 100%;
 }
 
 .board-section {
   width: 100%;
+  max-width: 100%;
   padding: clamp(16px, 2.8vw, 26px);
   border-radius: 22px;
   background: var(--surface-elevated);
@@ -315,6 +320,59 @@ button.secondary:hover {
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1), inset 0 4px 12px rgba(0, 0, 0, 0.1);
   touch-action: manipulation;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 移动端触摸优化 */
+@media (max-width: 768px) {
+  #board-canvas {
+    /* 确保在移动设备上有足够的触摸区域 */
+    min-height: 280px;
+    /* 防止意外的缩放和滚动 */
+    touch-action: pan-x pan-y pinch-zoom;
+  }
+}
+
+/* 通用按钮样式 */
+button {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+button:active {
+  transform: translateY(0);
+}
+
+button.secondary {
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--panel-border);
+}
+
+button.secondary:hover {
+  background: var(--surface-primary);
+  border-color: var(--accent);
+}
+
+/* 音效按钮特殊样式 */
+#audio-toggle-btn.disabled {
+  background: linear-gradient(135deg, #95a5a6, #7f8c8d);
+  opacity: 0.7;
 }
 
 .board-controls {
@@ -332,6 +390,8 @@ button.secondary:hover {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .skills-panel-header {
@@ -1256,6 +1316,27 @@ button.secondary:hover {
     flex: 1;
     padding: 8px 12px;
     font-size: 0.85rem;
+  }
+
+  /* 音效按钮样式 */
+  #audio-toggle-btn {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+
+  #audio-toggle-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  }
+
+  #audio-toggle-btn.disabled {
+    background: linear-gradient(135deg, #95a5a6, #7f8c8d);
+    opacity: 0.7;
   }
 
   .skills-panel {
