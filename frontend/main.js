@@ -227,18 +227,36 @@ const state = {
 };
 
 function init() {
-  state.displayName = ensureDisplayName();
-  wireEvents();
-  setupMobilePanels();
-  connectSocket();
-  adjustCanvasSize();
-  drawBoard();
-  updateAudioToggleButton(); // 初始化音效按钮状态
-  window.requestAnimationFrame(() => {
+  try {
+    state.displayName = ensureDisplayName();
+    wireEvents();
+    setupMobilePanels();
+    connectSocket();
     adjustCanvasSize();
     drawBoard();
-  });
+    updateAudioToggleButton(); // 初始化音效按钮状态
+    window.requestAnimationFrame(() => {
+      adjustCanvasSize();
+      drawBoard();
+    });
+  } catch (error) {
+    console.error('初始化失败:', error);
+    // 显示错误信息给用户
+    const errorDiv = document.createElement('div');
+    errorDiv.style.cssText = 'position: fixed; top: 10px; left: 10px; background: red; color: white; padding: 10px; z-index: 9999;';
+    errorDiv.textContent = '游戏初始化失败: ' + error.message;
+    document.body.appendChild(errorDiv);
+  }
 }
+
+// 全局错误处理
+window.addEventListener('error', function (event) {
+  console.error('JavaScript错误:', event.error);
+});
+
+window.addEventListener('unhandledrejection', function (event) {
+  console.error('未处理的Promise拒绝:', event.reason);
+});
 
 function ensureDisplayName() {
   const stored = localStorage.getItem('skills-gomoku-name');
@@ -459,7 +477,7 @@ function handleSocketMessage(event) {
 
   switch (type) {
     case 'connected':
-      state.clientId = payload?.clientId || null;
+      state.clientId = (payload && payload.clientId) || null;
       sendJoin();
       break;
     case 'joined':
@@ -467,7 +485,7 @@ function handleSocketMessage(event) {
       break;
     case 'state':
       // 检查是否有技能被使用，播放对应音效
-      if (payload.lastEvent?.type === 'skill' && payload.lastEvent.skillId) {
+      if (payload.lastEvent && payload.lastEvent.type === 'skill' && payload.lastEvent.skillId) {
         audioManager.playSkillSound(payload.lastEvent.skillId);
       }
       applyGameState(payload);
@@ -542,7 +560,7 @@ function applyGameState(gameState) {
 
   if (state.selection) {
     const skillId = state.selection.skill.id;
-    const ownerSkills = gameState.skills?.[state.color || 'black'] || [];
+    const ownerSkills = (gameState.skills && gameState.skills[state.color || 'black']) || [];
     const skillNow = ownerSkills.find((item) => item.id === skillId);
     if (!skillNow || skillNow.used || !skillNow.available) {
       cancelSelection();
@@ -554,7 +572,7 @@ function applyGameState(gameState) {
 }
 
 function handleServerError(payload) {
-  const message = payload?.message || '服务器内部错误';
+  const message = (payload && payload.message) || '服务器内部错误';
   showToast(message, 'error');
   if (state.selection) {
     cancelSelection();
@@ -596,7 +614,7 @@ function copyRoomLink() {
   }
   const url = new URL(window.location.href);
   url.searchParams.set('room', state.roomId);
-  if (navigator.clipboard?.writeText) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(url.toString()).then(() => {
       showToast('邀请链接已复制', 'success');
     }).catch(() => {
@@ -657,21 +675,21 @@ function updateUiFromState() {
   }
 
   const moveCount = countPlacedStones(game.board);
-  elements.turnNumber.textContent = game.turnNumber ?? moveCount;
+  elements.turnNumber.textContent = (game.turnNumber !== undefined && game.turnNumber !== null) ? game.turnNumber : moveCount;
   elements.moveCount.textContent = moveCount;
 
   const statusText = {
     waiting: '等待玩家加入',
     playing: '对局进行中',
     finished: '对局已结束'
-  }[game.status?.phase] || '对局状态未知';
+  }[(game.status && game.status.phase)] || '对局状态未知';
 
   elements.gameStatus.textContent = statusText;
 
-  if (game.players?.black) {
+  if (game.players && game.players.black) {
     elements.playerBlackName.textContent = game.players.black.displayName;
   }
-  if (game.players?.white) {
+  if (game.players && game.players.white) {
     elements.playerWhiteName.textContent = game.players.white.displayName;
   }
 
@@ -688,7 +706,7 @@ function updatePlayerCard(color) {
   }
   const turnElement = color === 'black' ? elements.playerBlackTurn : elements.playerWhiteTurn;
   const isActive = state.game.currentTurn === color && !state.game.winner;
-  const freezeTurns = state.game.freeze?.[color] ?? 0;
+  const freezeTurns = (state.game.freeze && state.game.freeze[color]) || 0;
 
   card.classList.toggle('active', isActive);
   card.classList.toggle('frozen', freezeTurns > 0);
@@ -715,7 +733,7 @@ function renderSkillGrid() {
 
   const owner = state.color || 'black';
   const skillList = game.skills[owner] || [];
-  const ownerName = game.players?.[owner]?.displayName || (owner === 'black' ? '子琪' : '张呈');
+  const ownerName = (game.players && game.players[owner] && game.players[owner].displayName) || (owner === 'black' ? '子琪' : '张呈');
   elements.skillsPanelTitle.textContent = `技能冷却（${ownerName}）`;
 
   const canOperate = canOperateNow();
@@ -746,7 +764,7 @@ function renderSkillGrid() {
       statusTag.textContent = '就绪';
     }
 
-    if (state.selection?.skill?.id === skill.id) {
+    if (state.selection && state.selection.skill && state.selection.skill.id === skill.id) {
       card.classList.add('selected');
     }
 
@@ -933,12 +951,12 @@ function handleSelectionClick(cell) {
 
 function handleBoardHover(event) {
   // 多点触摸时忽略
-  if (event?.touches && event.touches.length > 1) {
+  if (event && event.touches && event.touches.length > 1) {
     return;
   }
 
   // Pointer事件的非主要触摸点忽略
-  if (typeof event?.isPrimary === 'boolean' && event.isPrimary === false) {
+  if (event && typeof event.isPrimary === 'boolean' && event.isPrimary === false) {
     return;
   }
 
@@ -949,7 +967,7 @@ function handleBoardHover(event) {
     ('ontouchstart' in window);
 
   const cell = locateCell(event);
-  const changed = (state.hoverCell?.x !== cell?.x) || (state.hoverCell?.y !== cell?.y);
+  const changed = (state.hoverCell && state.hoverCell.x !== (cell && cell.x)) || (state.hoverCell && state.hoverCell.y !== (cell && cell.y));
 
   if (changed) {
     state.hoverCell = cell;
@@ -1254,7 +1272,7 @@ function canOperateNow() {
   if (state.game.currentTurn !== state.color) {
     return false;
   }
-  if ((state.game.freeze?.[state.color] ?? 0) > 0) {
+  if ((state.game.freeze && state.game.freeze[state.color] || 0) > 0) {
     return false;
   }
   return true;
@@ -1277,13 +1295,13 @@ function updateSubtitleFromState() {
 
   if (game.winner) {
     const name = game.winner === 'black'
-      ? (game.players?.black?.displayName || '子琪')
-      : (game.players?.white?.displayName || '张呈');
+      ? ((game.players && game.players.black && game.players.black.displayName) || '子琪')
+      : ((game.players && game.players.white && game.players.white.displayName) || '张呈');
     updateSubtitle(`对局结束，${name} 获胜`);
     return;
   }
 
-  if (!game.players?.black || !game.players?.white) {
+  if (!game.players || !game.players.black || !game.players.white) {
     updateSubtitle('等待另一位玩家加入...');
     return;
   }
@@ -1296,7 +1314,7 @@ function updateSubtitleFromState() {
     return;
   }
 
-  const freezeTurns = game.freeze?.[state.color] ?? 0;
+  const freezeTurns = (game.freeze && game.freeze[state.color]) || 0;
   if (freezeTurns > 0) {
     updateSubtitle(`你被静如止水冻结，还需等待 ${freezeTurns} 回合`);
     return;
@@ -1306,8 +1324,8 @@ function updateSubtitleFromState() {
     updateSubtitle('轮到你落子或使用技能');
   } else {
     const opponent = state.color === 'black'
-      ? (game.players?.white?.displayName || '张呈')
-      : (game.players?.black?.displayName || '子琪');
+      ? ((game.players && game.players.white && game.players.white.displayName) || '张呈')
+      : ((game.players && game.players.black && game.players.black.displayName) || '子琪');
     updateSubtitle(`等待 ${opponent} 行动`);
   }
 }
@@ -1443,7 +1461,7 @@ const EffectManager = {
 
   // 创建获胜特效
   createVictoryEffect(winner) {
-    const winnerName = state.game?.players?.[winner]?.displayName || (winner === 'black' ? '子琪' : '张呈');
+    const winnerName = (state.game && state.game.players && state.game.players[winner] && state.game.players[winner].displayName) || (winner === 'black' ? '子琪' : '张呈');
 
     // 播放胜利音效
     audioManager.playVictorySound(winner);
@@ -1495,11 +1513,11 @@ const EffectManager = {
         <div class="victory-stats">
           <div class="stat-item">
             <span class="stat-label">回合数</span>
-            <span class="stat-value">${state.game?.turnNumber || 0}</span>
+            <span class="stat-value">${(state.game && state.game.turnNumber) || 0}</span>
           </div>
           <div class="stat-item">
             <span class="stat-label">步数</span>
-            <span class="stat-value">${countPlacedStones(state.game?.board)}</span>
+            <span class="stat-value">${countPlacedStones(state.game && state.game.board)}</span>
           </div>
         </div>
         <button class="victory-close">
