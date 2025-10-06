@@ -186,6 +186,7 @@ const elements = {
   restartBtn: document.getElementById('restart-btn'),
   rulesBtn: document.getElementById('rules-btn'),
   audioToggleBtn: document.getElementById('audio-toggle-btn'),
+  reconnectBtn: document.getElementById('reconnect-btn'),
   turnNumber: document.getElementById('turn-number'),
   moveCount: document.getElementById('move-count'),
   gameStatus: document.getElementById('game-status'),
@@ -228,10 +229,17 @@ const state = {
 
 function init() {
   try {
+    console.log('开始初始化游戏...');
+    console.log('当前URL:', window.location.href);
+    console.log('用户代理:', navigator.userAgent);
+
     state.displayName = ensureDisplayName();
     wireEvents();
     setupMobilePanels();
-    connectSocket();
+
+    // 检查网络连接
+    checkNetworkAndConnect();
+
     adjustCanvasSize();
     drawBoard();
     updateAudioToggleButton(); // 初始化音效按钮状态
@@ -243,10 +251,46 @@ function init() {
     console.error('初始化失败:', error);
     // 显示错误信息给用户
     const errorDiv = document.createElement('div');
-    errorDiv.style.cssText = 'position: fixed; top: 10px; left: 10px; background: red; color: white; padding: 10px; z-index: 9999;';
+    errorDiv.style.cssText = 'position: fixed; top: 10px; left: 10px; background: red; color: white; padding: 10px; z-index: 9999; max-width: 300px;';
     errorDiv.textContent = '游戏初始化失败: ' + error.message;
     document.body.appendChild(errorDiv);
   }
+}
+
+function checkNetworkAndConnect() {
+  // 检查基本的网络连接
+  if (navigator.onLine === false) {
+    updateSubtitle('网络连接不可用');
+    showToast('请检查网络连接', 'error', 8000);
+    return;
+  }
+
+  // 尝试ping服务器
+  fetch('/health', {
+    method: 'GET',
+    cache: 'no-cache',
+    timeout: 5000
+  })
+    .then(response => {
+      if (response.ok) {
+        console.log('服务器健康检查通过');
+        connectSocket();
+      } else {
+        throw new Error('服务器响应异常: ' + response.status);
+      }
+    })
+    .catch(error => {
+      console.error('服务器健康检查失败:', error);
+      updateSubtitle('无法连接到服务器，请点击重新连接');
+      showToast('服务器不可用，请点击重新连接按钮', 'error', 8000);
+      showReconnectButton();
+
+      // 即使健康检查失败，也尝试WebSocket连接
+      setTimeout(() => {
+        console.log('尝试直接WebSocket连接...');
+        connectSocket();
+      }, 2000);
+    });
 }
 
 // 全局错误处理
@@ -275,6 +319,7 @@ function wireEvents() {
   elements.restartBtn.addEventListener('click', handleRestart);
   elements.rulesBtn.addEventListener('click', showRules);
   elements.audioToggleBtn.addEventListener('click', handleAudioToggle);
+  elements.reconnectBtn.addEventListener('click', handleReconnect);
   elements.modalClose.addEventListener('click', hideModal);
   elements.modal.addEventListener('click', (evt) => {
     if (evt.target === elements.modal) {
@@ -365,7 +410,7 @@ function setupMobilePanels() {
     return;
   }
 
-  const fallback = panels[0]?.dataset?.panel || 'info';
+  const fallback = (panels[0] && panels[0].dataset && panels[0].dataset.panel) || 'info';
   let preferred = fallback;
 
   try {
@@ -438,30 +483,70 @@ function setupMobilePanels() {
 }
 
 function connectSocket() {
-  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const wsUrl = `${protocol}://${window.location.host}`;
-  const socket = new WebSocket(wsUrl);
-  state.socket = socket;
+  try {
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsUrl = `${protocol}://${window.location.host}`;
 
-  socket.addEventListener('open', () => {
-    updateSubtitle('连接成功，正在加入房间...');
-  });
+    console.log('尝试连接WebSocket:', wsUrl);
+    updateSubtitle('正在连接服务器...');
 
-  socket.addEventListener('message', handleSocketMessage);
+    const socket = new WebSocket(wsUrl);
+    state.socket = socket;
 
-  socket.addEventListener('close', () => {
-    clearInterval(state.pingTimer);
-    showToast('连接已断开，如需继续请刷新页面', 'error', 6000);
-    updateSubtitle('连接已断开');
-  });
+    socket.addEventListener('open', () => {
+      console.log('WebSocket连接成功');
+      updateSubtitle('连接成功，正在加入房间...');
+      clearTimeout(state.connectionTimeout);
+    });
 
-  socket.addEventListener('error', () => {
-    showToast('网络异常，请检查网络后刷新页面', 'error');
-  });
+    socket.addEventListener('message', handleSocketMessage);
 
-  state.pingTimer = setInterval(() => {
-    sendMessage('ping', { time: Date.now() });
-  }, 20000);
+    socket.addEventListener('close', (event) => {
+      console.log('WebSocket连接关闭:', event.code, event.reason);
+      clearInterval(state.pingTimer);
+      clearTimeout(state.connectionTimeout);
+
+      if (event.code === 1006) {
+        // 异常关闭，可能是网络问题
+        updateSubtitle('连接异常断开，请点击重新连接');
+        showToast('网络连接异常，请点击重新连接按钮', 'error', 8000);
+      } else {
+        updateSubtitle('连接已断开，请点击重新连接');
+        showToast('连接已断开，请点击重新连接按钮', 'error', 6000);
+      }
+      showReconnectButton();
+    });
+
+    socket.addEventListener('error', (error) => {
+      console.error('WebSocket连接错误:', error);
+      clearTimeout(state.connectionTimeout);
+      updateSubtitle('连接失败，请点击重新连接');
+      showToast('无法连接到服务器，请点击重新连接按钮', 'error', 8000);
+      showReconnectButton();
+    });
+
+    // 连接超时检测
+    state.connectionTimeout = setTimeout(() => {
+      if (socket.readyState === WebSocket.CONNECTING) {
+        console.log('WebSocket连接超时');
+        socket.close();
+        updateSubtitle('连接超时，请点击重新连接');
+        showToast('连接服务器超时，请点击重新连接按钮', 'error', 8000);
+        showReconnectButton();
+      }
+    }, 10000); // 10秒超时
+
+    state.pingTimer = setInterval(() => {
+      if (socket.readyState === WebSocket.OPEN) {
+        sendMessage('ping', { time: Date.now() });
+      }
+    }, 20000);
+
+  } catch (error) {
+    console.error('创建WebSocket连接失败:', error);
+    updateSubtitle('连接失败');
+    showToast('无法创建连接，请刷新页面重试', 'error', 8000);
+  }
 }
 
 function handleSocketMessage(event) {
@@ -653,6 +738,31 @@ function updateAudioToggleButton() {
   const enabled = audioManager.isEnabled();
   elements.audioToggleBtn.textContent = enabled ? '🔊 音效' : '🔇 音效';
   elements.audioToggleBtn.classList.toggle('disabled', !enabled);
+}
+
+function handleReconnect() {
+  console.log('用户手动重连');
+  elements.reconnectBtn.style.display = 'none';
+
+  // 关闭现有连接
+  if (state.socket) {
+    state.socket.close();
+  }
+
+  // 清理定时器
+  clearInterval(state.pingTimer);
+  clearTimeout(state.connectionTimeout);
+
+  // 重新连接
+  setTimeout(() => {
+    checkNetworkAndConnect();
+  }, 1000);
+}
+
+function showReconnectButton() {
+  if (elements.reconnectBtn) {
+    elements.reconnectBtn.style.display = 'inline-block';
+  }
 }
 
 function showToast(message, variant = 'info', duration = 3200) {

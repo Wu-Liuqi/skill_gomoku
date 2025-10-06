@@ -195,6 +195,22 @@ button.secondary:hover {
   font-size: clamp(1.05rem, 1rem + 0.45vw, 1.3rem);
 }
 
+#reconnect-btn {
+  background: linear-gradient(135deg, #ff6b6b, #ff8e8e);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+#reconnect-btn:hover {
+  background: linear-gradient(135deg, #ff5252, #ff7979);
+  transform: translateY(-1px);
+}
+
 .players-banner {
   display: flex;
   justify-content: center;
