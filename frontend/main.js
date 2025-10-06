@@ -257,6 +257,48 @@ function init() {
   }
 }
 
+function getWebSocketUrls() {
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const host = window.location.host;
+  const hostname = window.location.hostname;
+  const port = window.location.port;
+
+  // 检查是否通过nginx代理
+  const isExternalIP = /^\d+\.\d+\.\d+\.\d+/.test(hostname);
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+
+  console.log('当前访问信息:', {
+    protocol: window.location.protocol,
+    hostname: hostname,
+    host: host,
+    port: port,
+    isExternalIP: isExternalIP,
+    isLocalhost: isLocalhost
+  });
+
+  const urls = [];
+
+  if (isExternalIP && !port) {
+    // 外网IP访问，可能通过nginx代理
+    urls.push(`${protocol}://${host}/ws`);  // 带/ws路径
+    urls.push(`${protocol}://${host}`);     // 直接连接
+    urls.push(`${protocol}://${hostname}:3000`); // 尝试直连3000端口
+  } else if (isLocalhost) {
+    // 本地访问
+    urls.push(`${protocol}://${host}`);     // 直接连接
+    if (!port || port !== '3000') {
+      urls.push(`${protocol}://${hostname}:3000`); // 尝试3000端口
+    }
+  } else {
+    // 其他情况
+    urls.push(`${protocol}://${host}`);     // 直接连接
+    urls.push(`${protocol}://${host}/ws`);  // 带/ws路径
+  }
+
+  console.log('WebSocket URL候选列表:', urls);
+  return urls;
+}
+
 function checkNetworkAndConnect() {
   // 检查基本的网络连接
   if (navigator.onLine === false) {
@@ -482,12 +524,13 @@ function setupMobilePanels() {
   setActive(preferred, { skipPersist: true });
 }
 
-function connectSocket() {
+function connectSocket(fallbackAttempt = 0) {
   try {
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsUrl = `${protocol}://${window.location.host}`;
+    // 获取WebSocket URL列表，按优先级排序
+    const wsUrls = getWebSocketUrls();
+    const wsUrl = wsUrls[fallbackAttempt] || wsUrls[0];
 
-    console.log('尝试连接WebSocket:', wsUrl);
+    console.log(`尝试连接WebSocket (尝试 ${fallbackAttempt + 1}/${wsUrls.length}):`, wsUrl);
     updateSubtitle('正在连接服务器...');
 
     const socket = new WebSocket(wsUrl);
@@ -520,9 +563,19 @@ function connectSocket() {
     socket.addEventListener('error', (error) => {
       console.error('WebSocket连接错误:', error);
       clearTimeout(state.connectionTimeout);
-      updateSubtitle('连接失败，请点击重新连接');
-      showToast('无法连接到服务器，请点击重新连接按钮', 'error', 8000);
-      showReconnectButton();
+
+      // 尝试下一个URL
+      const wsUrls = getWebSocketUrls();
+      if (fallbackAttempt + 1 < wsUrls.length) {
+        console.log('尝试下一个WebSocket URL...');
+        setTimeout(() => {
+          connectSocket(fallbackAttempt + 1);
+        }, 1000);
+      } else {
+        updateSubtitle('连接失败，请点击重新连接');
+        showToast('无法连接到服务器，请点击重新连接按钮', 'error', 8000);
+        showReconnectButton();
+      }
     });
 
     // 连接超时检测
@@ -530,11 +583,19 @@ function connectSocket() {
       if (socket.readyState === WebSocket.CONNECTING) {
         console.log('WebSocket连接超时');
         socket.close();
-        updateSubtitle('连接超时，请点击重新连接');
-        showToast('连接服务器超时，请点击重新连接按钮', 'error', 8000);
-        showReconnectButton();
+
+        // 尝试下一个URL
+        const wsUrls = getWebSocketUrls();
+        if (fallbackAttempt + 1 < wsUrls.length) {
+          console.log('连接超时，尝试下一个WebSocket URL...');
+          connectSocket(fallbackAttempt + 1);
+        } else {
+          updateSubtitle('连接超时，请点击重新连接');
+          showToast('连接服务器超时，请点击重新连接按钮', 'error', 8000);
+          showReconnectButton();
+        }
       }
-    }, 10000); // 10秒超时
+    }, 8000); // 8秒超时，给回退留时间
 
     state.pingTimer = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) {

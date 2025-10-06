@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>连接调试</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: #f0f0f0;
+    }
+    .debug-container {
+      max-width: 600px;
+      margin: 0 auto;
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .log {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      padding: 10px;
+      margin: 10px 0;
+      font-family: monospace;
+      white-space: pre-wrap;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    button {
+      margin: 5px;
+      padding: 10px 15px;
+      border: none;
+      border-radius: 5px;
+      background: #007bff;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    .status {
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 5px;
+      font-weight: bold;
+    }
+    .status.success { background: #d4edda; color: #155724; }
+    .status.error { background: #f8d7da; color: #721c24; }
+    .status.info { background: #d1ecf1; color: #0c5460; }
+  </style>
+</head>
+<body>
+  <div class="debug-container">
+    <h1>技能五子棋连接调试</h1>
+    
+    <div class="status" id="status">准备就绪</div>
+    
+    <div>
+      <button onclick="testHealth()">测试服务器健康</button>
+      <button onclick="testWebSocket()">测试WebSocket连接</button>
+      <button onclick="clearLog()">清空日志</button>
+    </div>
+    
+    <h3>调试信息</h3>
+    <div>
+      <strong>当前URL:</strong> <span id="current-url"></span><br>
+      <strong>协议:</strong> <span id="protocol"></span><br>
+      <strong>主机:</strong> <span id="host"></span><br>
+      <strong>用户代理:</strong> <span id="user-agent"></span><br>
+      <strong>在线状态:</strong> <span id="online-status"></span><br>
+    </div>
+    
+    <h3>连接日志</h3>
+    <div class="log" id="log"></div>
+  </div>
+
+  <script>
+    let logElement = document.getElementById('log');
+    let statusElement = document.getElementById('status');
+    
+    function log(message, type = 'info') {
+      const timestamp = new Date().toLocaleTimeString();
+      logElement.textContent += `[${timestamp}] ${message}\n`;
+      logElement.scrollTop = logElement.scrollHeight;
+      console.log(message);
+    }
+    
+    function setStatus(message, type = 'info') {
+      statusElement.textContent = message;
+      statusElement.className = `status ${type}`;
+    }
+    
+    function clearLog() {
+      logElement.textContent = '';
+    }
+    
+    function updateInfo() {
+      document.getElementById('current-url').textContent = window.location.href;
+      document.getElementById('protocol').textContent = window.location.protocol;
+      document.getElementById('host').textContent = window.location.host;
+      document.getElementById('user-agent').textContent = navigator.userAgent;
+      document.getElementById('online-status').textContent = navigator.onLine ? '在线' : '离线';
+    }
+    
+    function testHealth() {
+      log('开始测试服务器健康检查...');
+      setStatus('测试服务器健康中...', 'info');
+      
+      fetch('/health', { 
+        method: 'GET',
+        cache: 'no-cache'
+      })
+      .then(response => {
+        log(`健康检查响应状态: ${response.status}`);
+        if (response.ok) {
+          return response.json();
+        } else {
+          throw new Error(`HTTP ${response.status}`);
+        }
+      })
+      .then(data => {
+        log(`健康检查成功: ${JSON.stringify(data)}`);
+        setStatus('服务器健康检查通过', 'success');
+      })
+      .catch(error => {
+        log(`健康检查失败: ${error.message}`);
+        setStatus('服务器健康检查失败', 'error');
+      });
+    }
+    
+    function getWebSocketUrls() {
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const host = window.location.host;
+      const hostname = window.location.hostname;
+      const port = window.location.port;
+      
+      const isExternalIP = /^\d+\.\d+\.\d+\.\d+/.test(hostname);
+      const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+      
+      const urls = [];
+      
+      if (isExternalIP && !port) {
+        urls.push(`${protocol}://${host}/ws`);
+        urls.push(`${protocol}://${host}`);
+        urls.push(`${protocol}://${hostname}:3000`);
+      } else if (isLocalhost) {
+        urls.push(`${protocol}://${host}`);
+        if (!port || port !== '3000') {
+          urls.push(`${protocol}://${hostname}:3000`);
+        }
+      } else {
+        urls.push(`${protocol}://${host}`);
+        urls.push(`${protocol}://${host}/ws`);
+      }
+      
+      return urls;
+    }
+    
+    function testWebSocket() {
+      log('开始测试WebSocket连接...');
+      setStatus('测试WebSocket连接中...', 'info');
+      
+      const wsUrls = getWebSocketUrls();
+      log(`WebSocket URL候选列表: ${JSON.stringify(wsUrls)}`);
+      
+      testWebSocketUrl(wsUrls, 0);
+    }
+    
+    function testWebSocketUrl(urls, index) {
+      if (index >= urls.length) {
+        log('所有WebSocket URL都测试失败');
+        setStatus('所有WebSocket连接都失败', 'error');
+        return;
+      }
+      
+      const wsUrl = urls[index];
+      log(`测试WebSocket URL (${index + 1}/${urls.length}): ${wsUrl}`);
+      
+      const socket = new WebSocket(wsUrl);
+      
+      const timeout = setTimeout(() => {
+        log(`WebSocket连接超时: ${wsUrl}`);
+        socket.close();
+        // 尝试下一个URL
+        setTimeout(() => testWebSocketUrl(urls, index + 1), 1000);
+      }, 8000);
+      
+      socket.addEventListener('open', () => {
+        clearTimeout(timeout);
+        log(`WebSocket连接成功: ${wsUrl}`);
+        setStatus('WebSocket连接成功', 'success');
+        
+        // 发送测试消息
+        socket.send(JSON.stringify({ type: 'ping', payload: { test: true } }));
+        log('发送测试消息');
+      });
+      
+      socket.addEventListener('message', (event) => {
+        log(`收到消息: ${event.data}`);
+      });
+      
+      socket.addEventListener('close', (event) => {
+        clearTimeout(timeout);
+        log(`WebSocket连接关闭: ${wsUrl}, code=${event.code}, reason=${event.reason}`);
+        if (event.code !== 1000) { // 非正常关闭
+          setTimeout(() => testWebSocketUrl(urls, index + 1), 1000);
+        }
+      });
+      
+      socket.addEventListener('error', (error) => {
+        clearTimeout(timeout);
+        log(`WebSocket连接错误: ${wsUrl}, ${error}`);
+        // 尝试下一个URL
+        setTimeout(() => testWebSocketUrl(urls, index + 1), 1000);
+      });
+    }
+    
+    // 初始化
+    updateInfo();
+    log('调试页面已加载');
+    
+    // 监听网络状态变化
+    window.addEventListener('online', () => {
+      log('网络连接恢复');
+      updateInfo();
+    });
+    
+    window.addEventListener('offline', () => {
+      log('网络连接断开');
+      updateInfo();
+    });
+  </script>
+</body>
+</html>
