@@ -38,6 +38,11 @@
 
     <section class="turn-banner" aria-live="polite">
       <p id="subtitle">连接服务器中...</p>
+      <div id="connection-status" class="connection-status" style="display: none;">
+        <div class="status-item">WebSocket: <span id="ws-status">未连接</span></div>
+        <div class="status-item">客户端ID: <span id="client-id">无</span></div>
+        <div class="status-item">房间状态: <span id="room-status">未加入</span></div>
+      </div>
       <button id="reconnect-btn" class="secondary" type="button" style="display: none; margin-top: 10px;">重新连接</button>
     </section>
 
@@ -92,6 +97,22 @@
 
   <!-- 特效容器 -->
   <div id="effect-overlay" class="effect-overlay"></div>
+
+  <!-- 移动端调试面板 -->
+  <div id="mobile-debug" class="mobile-debug" style="display: none;">
+    <div class="debug-header">
+      <span>调试信息</span>
+      <button onclick="toggleMobileDebug()">关闭</button>
+    </div>
+    <div id="debug-log" class="debug-log"></div>
+    <div class="debug-actions">
+      <button onclick="clearDebugLog()">清空</button>
+      <button onclick="testConnection()">测试连接</button>
+    </div>
+  </div>
+
+  <!-- 调试按钮 -->
+  <button id="debug-toggle" class="debug-toggle" onclick="toggleMobileDebug()" style="display: none;">🐛</button>
 
   <script src="main.js"></script>
 </body>

@@ -539,7 +539,14 @@ function connectSocket(fallbackAttempt = 0) {
     socket.addEventListener('open', () => {
       console.log('WebSocket连接成功');
       updateSubtitle('连接成功，正在加入房间...');
+      updateConnectionStatus('ws-status', '已连接', 'success');
       clearTimeout(state.connectionTimeout);
+
+      // 立即发送join请求
+      setTimeout(() => {
+        console.log('准备发送join请求...');
+        sendJoin();
+      }, 100);
     });
 
     socket.addEventListener('message', handleSocketMessage);
@@ -611,6 +618,7 @@ function connectSocket(fallbackAttempt = 0) {
 }
 
 function handleSocketMessage(event) {
+  console.log('收到WebSocket消息:', event.data);
   let message;
   try {
     message = JSON.parse(event.data);
@@ -620,16 +628,23 @@ function handleSocketMessage(event) {
   }
 
   const { type, payload } = message;
+  console.log('解析后的消息:', { type, payload });
 
   switch (type) {
     case 'connected':
+      console.log('收到connected消息');
       state.clientId = (payload && payload.clientId) || null;
+      console.log('设置clientId:', state.clientId);
+      updateConnectionStatus('client-id', state.clientId || '无', 'info');
       sendJoin();
       break;
     case 'joined':
+      console.log('收到joined消息');
+      updateConnectionStatus('room-status', '已加入房间', 'success');
       applyJoinResult(payload);
       break;
     case 'state':
+      console.log('收到state消息');
       // 检查是否有技能被使用，播放对应音效
       if (payload.lastEvent && payload.lastEvent.type === 'skill' && payload.lastEvent.skillId) {
         audioManager.playSkillSound(payload.lastEvent.skillId);
@@ -647,13 +662,19 @@ function handleSocketMessage(event) {
 }
 
 function sendJoin() {
+  console.log('sendJoin被调用');
   if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
+    console.log('WebSocket未连接，无法发送join');
     return;
   }
-  sendMessage('join', {
+
+  const joinData = {
     roomId: state.roomId,
     displayName: state.displayName
-  });
+  };
+  console.log('发送join消息:', joinData);
+
+  sendMessage('join', joinData);
 }
 
 function applyJoinResult(payload) {
@@ -727,9 +748,19 @@ function handleServerError(payload) {
 
 function sendMessage(type, payload) {
   if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
+    console.log('WebSocket未连接，无法发送消息:', type);
     return;
   }
-  state.socket.send(JSON.stringify({ type, payload }));
+
+  const message = { type, payload };
+  console.log('发送WebSocket消息:', message);
+
+  try {
+    state.socket.send(JSON.stringify(message));
+    console.log('消息发送成功');
+  } catch (error) {
+    console.error('发送消息失败:', error);
+  }
 }
 
 function handleRestart() {
@@ -823,6 +854,20 @@ function handleReconnect() {
 function showReconnectButton() {
   if (elements.reconnectBtn) {
     elements.reconnectBtn.style.display = 'inline-block';
+  }
+}
+
+function updateConnectionStatus(elementId, text, type = 'info') {
+  const element = document.getElementById(elementId);
+  if (element) {
+    element.textContent = text;
+    element.className = `status-${type}`;
+  }
+
+  // 显示连接状态面板
+  const statusPanel = document.getElementById('connection-status');
+  if (statusPanel && isMobileDebugMode()) {
+    statusPanel.style.display = 'block';
   }
 }
 
@@ -1503,6 +1548,22 @@ function updateSubtitleFromState() {
 
 function updateSubtitle(text) {
   elements.subtitle.textContent = text;
+
+  // 移动端额外显示连接状态
+  if (isMobileDebugMode()) {
+    console.log('状态更新:', text);
+
+    // 如果连接失败，自动显示调试面板
+    if (text.includes('失败') || text.includes('断开') || text.includes('超时')) {
+      setTimeout(() => {
+        const debugToggle = document.getElementById('debug-toggle');
+        if (debugToggle && debugToggle.style.display !== 'none') {
+          debugToggle.style.background = 'rgba(255, 0, 0, 0.8)';
+          debugToggle.textContent = '❗';
+        }
+      }, 1000);
+    }
+  }
 }
 
 function countPlacedStones(board) {
@@ -1819,6 +1880,97 @@ const EffectManager = {
     }, 300);
   }
 };
+
+// 移动端调试功能
+let debugLog = [];
+let originalConsoleLog = console.log;
+let originalConsoleError = console.error;
+let originalConsoleWarn = console.warn;
+
+function isMobileDebugMode() {
+  return window.innerWidth <= 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
+function addDebugLog(message, type = 'log') {
+  const timestamp = new Date().toLocaleTimeString();
+  const logEntry = `[${timestamp}] ${type.toUpperCase()}: ${message}`;
+  debugLog.push(logEntry);
+
+  // 保持最近100条日志
+  if (debugLog.length > 100) {
+    debugLog.shift();
+  }
+
+  // 更新调试面板
+  const debugLogElement = document.getElementById('debug-log');
+  if (debugLogElement) {
+    debugLogElement.textContent = debugLog.join('\n');
+    debugLogElement.scrollTop = debugLogElement.scrollHeight;
+  }
+}
+
+// 重写console方法以捕获日志
+if (isMobileDebugMode()) {
+  console.log = function (...args) {
+    originalConsoleLog.apply(console, args);
+    addDebugLog(args.join(' '), 'log');
+  };
+
+  console.error = function (...args) {
+    originalConsoleError.apply(console, args);
+    addDebugLog(args.join(' '), 'error');
+  };
+
+  console.warn = function (...args) {
+    originalConsoleWarn.apply(console, args);
+    addDebugLog(args.join(' '), 'warn');
+  };
+}
+
+function toggleMobileDebug() {
+  const debugPanel = document.getElementById('mobile-debug');
+  const debugToggle = document.getElementById('debug-toggle');
+
+  if (debugPanel.style.display === 'none') {
+    debugPanel.style.display = 'flex';
+    debugToggle.style.display = 'none';
+  } else {
+    debugPanel.style.display = 'none';
+    debugToggle.style.display = 'block';
+  }
+}
+
+function clearDebugLog() {
+  debugLog = [];
+  const debugLogElement = document.getElementById('debug-log');
+  if (debugLogElement) {
+    debugLogElement.textContent = '';
+  }
+}
+
+function testConnection() {
+  addDebugLog('用户手动测试连接', 'info');
+  handleReconnect();
+}
+
+// 显示调试按钮（仅移动端）
+if (isMobileDebugMode()) {
+  document.addEventListener('DOMContentLoaded', () => {
+    const debugToggle = document.getElementById('debug-toggle');
+    if (debugToggle) {
+      debugToggle.style.display = 'block';
+    }
+  });
+}
+
+// 全局错误处理
+window.addEventListener('error', function (event) {
+  console.error('JavaScript错误:', event.error);
+});
+
+window.addEventListener('unhandledrejection', function (event) {
+  console.error('未处理的Promise拒绝:', event.reason);
+});
 
 init();
 
