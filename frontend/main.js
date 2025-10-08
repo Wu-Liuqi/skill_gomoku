@@ -245,7 +245,6 @@ const elements = {
   restartBtn: document.getElementById('restart-btn'),
   rulesBtn: document.getElementById('rules-btn'),
   audioToggleBtn: document.getElementById('audio-toggle-btn'),
-  reconnectBtn: document.getElementById('reconnect-btn'),
   turnNumber: document.getElementById('turn-number'),
   moveCount: document.getElementById('move-count'),
   gameStatus: document.getElementById('game-status'),
@@ -283,7 +282,10 @@ const state = {
   pingTimer: null,
   toastTimer: null,
   activeMobilePanel: null,
-  resizeObserver: null
+  resizeObserver: null,
+  reconnectTimer: null,
+  lastTouchCell: null,
+  lastInputWasTouch: false
 };
 
 function init() {
@@ -362,7 +364,8 @@ function checkNetworkAndConnect() {
   // 检查基本的网络连接
   if (navigator.onLine === false) {
     updateSubtitle('网络连接不可用');
-    showToast('请检查网络连接', 'error', 8000);
+    showToast('网络连接不可用', 'error', 8000);
+    scheduleReconnect(5000);
     return;
   }
 
@@ -381,20 +384,35 @@ function checkNetworkAndConnect() {
       }
     })
     .catch(error => {
-      console.error('服务器健康检查失败:', error);
-      updateSubtitle('无法连接到服务器，请点击重新连接');
-      showToast('服务器不可用，请点击重新连接按钮', 'error', 8000);
-      showReconnectButton();
+      console.error('健康检查失败:', error);
+      updateSubtitle('无法连接到服务器，请稍后重试');
+      showToast('服务器暂时不可用，将在几秒后自动重试', 'error', 8000);
+      scheduleReconnect(6000);
 
-      // 即使健康检查失败，也尝试WebSocket连接
       setTimeout(() => {
         console.log('尝试直接WebSocket连接...');
         connectSocket();
       }, 2000);
     });
+
 }
 
 // 全局错误处理
+function scheduleReconnect(delay = 4000) {
+  clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = window.setTimeout(() => {
+    console.log(`计划在${delay}ms后自动重连`);
+    checkNetworkAndConnect();
+  }, delay);
+}
+
+function clearReconnectSchedule() {
+  if (state.reconnectTimer) {
+    clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = null;
+  }
+}
+
 window.addEventListener('error', function (event) {
   console.error('JavaScript错误:', event.error);
 });
@@ -420,7 +438,6 @@ function wireEvents() {
   elements.restartBtn.addEventListener('click', handleRestart);
   elements.rulesBtn.addEventListener('click', showRules);
   elements.audioToggleBtn.addEventListener('click', handleAudioToggle);
-  elements.reconnectBtn.addEventListener('click', handleReconnect);
   elements.modalClose.addEventListener('click', hideModal);
   elements.modal.addEventListener('click', (evt) => {
     if (evt.target === elements.modal) {
@@ -585,6 +602,7 @@ function setupMobilePanels() {
 
 function connectSocket(fallbackAttempt = 0) {
   try {
+    clearReconnectSchedule();
     // 获取WebSocket URL列表，按优先级排序
     const wsUrls = getWebSocketUrls();
     const wsUrl = wsUrls[fallbackAttempt] || wsUrls[0];
@@ -598,8 +616,8 @@ function connectSocket(fallbackAttempt = 0) {
     socket.addEventListener('open', () => {
       console.log('WebSocket连接成功');
       updateSubtitle('连接成功，正在加入房间...');
-      updateConnectionStatus('ws-status', '已连接', 'success');
       clearTimeout(state.connectionTimeout);
+      clearReconnectSchedule();
 
       // 立即发送join请求
       setTimeout(() => {
@@ -612,25 +630,26 @@ function connectSocket(fallbackAttempt = 0) {
 
     socket.addEventListener('close', (event) => {
       console.log('WebSocket连接关闭:', event.code, event.reason);
+      state.socket = null;
       clearInterval(state.pingTimer);
       clearTimeout(state.connectionTimeout);
+      clearReconnectSchedule();
 
       if (event.code === 1006) {
-        // 异常关闭，可能是网络问题
-        updateSubtitle('连接异常断开，请点击重新连接');
-        showToast('网络连接异常，请点击重新连接按钮', 'error', 8000);
+        updateSubtitle('连接异常断开，系统将自动重试');
+        showToast('连接异常断开，将在几秒后自动重试', 'error', 8000);
       } else {
-        updateSubtitle('连接已断开，请点击重新连接');
-        showToast('连接已断开，请点击重新连接按钮', 'error', 6000);
+        updateSubtitle('连接已断开，正在自动重试');
+        showToast('连接已断开，将在几秒后自动重试', 'error', 6000);
       }
-      showReconnectButton();
+      scheduleReconnect(4000);
     });
 
     socket.addEventListener('error', (error) => {
       console.error('WebSocket连接错误:', error);
       clearTimeout(state.connectionTimeout);
+      clearReconnectSchedule();
 
-      // 尝试下一个URL
       const wsUrls = getWebSocketUrls();
       if (fallbackAttempt + 1 < wsUrls.length) {
         console.log('尝试下一个WebSocket URL...');
@@ -638,9 +657,9 @@ function connectSocket(fallbackAttempt = 0) {
           connectSocket(fallbackAttempt + 1);
         }, 1000);
       } else {
-        updateSubtitle('连接失败，请点击重新连接');
-        showToast('无法连接到服务器，请点击重新连接按钮', 'error', 8000);
-        showReconnectButton();
+        updateSubtitle('连接失败，系统会自动重试');
+        showToast('无法连接到服务器，将在几秒后自动重试', 'error', 8000);
+        scheduleReconnect(5000);
       }
     });
 
@@ -650,15 +669,14 @@ function connectSocket(fallbackAttempt = 0) {
         console.log('WebSocket连接超时');
         socket.close();
 
-        // 尝试下一个URL
         const wsUrls = getWebSocketUrls();
         if (fallbackAttempt + 1 < wsUrls.length) {
           console.log('连接超时，尝试下一个WebSocket URL...');
           connectSocket(fallbackAttempt + 1);
         } else {
-          updateSubtitle('连接超时，请点击重新连接');
-          showToast('连接服务器超时，请点击重新连接按钮', 'error', 8000);
-          showReconnectButton();
+          updateSubtitle('连接超时，系统会自动重试');
+          showToast('连接服务器超时，将在几秒后自动重试', 'error', 8000);
+          scheduleReconnect(5000);
         }
       }
     }, 8000); // 8秒超时，给回退留时间
@@ -694,12 +712,10 @@ function handleSocketMessage(event) {
       console.log('收到connected消息');
       state.clientId = (payload && payload.clientId) || null;
       console.log('设置clientId:', state.clientId);
-      updateConnectionStatus('client-id', state.clientId || '无', 'info');
       sendJoin();
       break;
     case 'joined':
       console.log('收到joined消息');
-      updateConnectionStatus('room-status', '已加入房间', 'success');
       applyJoinResult(payload);
       break;
     case 'state':
@@ -912,44 +928,8 @@ if (typeof window !== 'undefined') {
   }, { once: true });
 }
 
-function handleReconnect() {
-  console.log('用户手动重连');
-  elements.reconnectBtn.style.display = 'none';
 
-  // 关闭现有连接
-  if (state.socket) {
-    state.socket.close();
-  }
 
-  // 清理定时器
-  clearInterval(state.pingTimer);
-  clearTimeout(state.connectionTimeout);
-
-  // 重新连接
-  setTimeout(() => {
-    checkNetworkAndConnect();
-  }, 1000);
-}
-
-function showReconnectButton() {
-  if (elements.reconnectBtn) {
-    elements.reconnectBtn.style.display = 'inline-block';
-  }
-}
-
-function updateConnectionStatus(elementId, text, type = 'info') {
-  const element = document.getElementById(elementId);
-  if (element) {
-    element.textContent = text;
-    element.className = `status-${type}`;
-  }
-
-  // 显示连接状态面板
-  const statusPanel = document.getElementById('connection-status');
-  if (statusPanel && isMobileDebugMode()) {
-    statusPanel.style.display = 'block';
-  }
-}
 
 function showToast(message, variant = 'info', duration = 3200) {
   clearTimeout(state.toastTimer);
@@ -1176,15 +1156,21 @@ function computeValidTargets(meta) {
 }
 
 function handleBoardClick(event) {
-  const cell = locateCell(event);
-  if (!cell) {
-    // 在开发模式下，可以取消注释下面的代码来调试触摸精度
-    // console.log('No cell located for event:', event.type, getInputPoint(event));
+  let cell = locateCell(event);
+
+  if ((!cell || typeof cell.x !== 'number' || typeof cell.y !== 'number') && state.lastInputWasTouch && state.lastTouchCell) {
+    cell = { ...state.lastTouchCell };
+  }
+
+  state.lastInputWasTouch = false;
+
+  if (!cell || typeof cell.x !== 'number' || typeof cell.y !== 'number') {
     return;
   }
 
   if (state.selection) {
     handleSelectionClick(cell);
+    state.lastTouchCell = null;
     return;
   }
 
@@ -1199,20 +1185,21 @@ function handleBoardClick(event) {
       });
       showToast(reason, 'warning');
     } else {
-      showToast('当前无法落子', 'warning');
+      showToast('当前无法操作', 'warning');
     }
+    state.lastTouchCell = null;
     return;
   }
-
 
   if (state.game?.board?.[cell.y]?.[cell.x]) {
     showToast('该位置已有棋子', 'warning');
+    state.lastTouchCell = null;
     return;
   }
 
-  // 播放落子音效
   audioManager.playMoveSound();
   sendMessage('move', cell);
+  state.lastTouchCell = null;
 }
 
 function handleSelectionClick(cell) {
@@ -1258,40 +1245,57 @@ function handleSelectionClick(cell) {
 }
 
 function handleBoardHover(event) {
-  // 多点触摸时忽略
   if (event && event.touches && event.touches.length > 1) {
     return;
   }
 
-  // Pointer事件的非主要触摸点忽略
   if (event && typeof event.isPrimary === 'boolean' && event.isPrimary === false) {
     return;
   }
 
-  // 对于触摸设备，在touchstart时提供即时反馈
-  const isTouchStart = event.type === 'touchstart';
-  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-    window.innerWidth <= 768 ||
-    ('ontouchstart' in window);
+  const isTouchEvent = !!(event && (event.type.startsWith('touch') || (typeof event.pointerType === 'string' && event.pointerType === 'touch')));
+  if (isTouchEvent && event && event.cancelable && typeof event.preventDefault === 'function') {
+    event.preventDefault();
+  }
 
+  const isTouchStart = event && event.type === 'touchstart';
   const cell = locateCell(event);
-  const changed = (state.hoverCell && state.hoverCell.x !== (cell && cell.x)) || (state.hoverCell && state.hoverCell.y !== (cell && cell.y));
+
+  if (isTouchEvent) {
+    state.lastInputWasTouch = true;
+    if (cell) {
+      state.lastTouchCell = cell;
+    }
+  }
+
+  const previous = state.hoverCell;
+  const changed = (previous?.x !== cell?.x) || (previous?.y !== cell?.y);
 
   if (changed) {
-    state.hoverCell = cell;
+    state.hoverCell = cell || null;
     drawBoard();
 
-    // 移动设备上的触摸反馈
-    if (isMobile && isTouchStart && cell && navigator.vibrate) {
-      navigator.vibrate(10); // 轻微震动反馈
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+      window.innerWidth <= 768 ||
+      ('ontouchstart' in window);
+
+    if (isTouchEvent && isMobile && isTouchStart && cell && navigator.vibrate) {
+      navigator.vibrate(10);
     }
   }
 }
 
-function clearHoverCell() {
+function clearHoverCell(event) {
+  const isTouchEvent = !!(event && event.type && event.type.startsWith('touch'));
+  if (!isTouchEvent) {
+    state.lastTouchCell = null;
+    state.lastInputWasTouch = false;
+  }
+
   if (!state.hoverCell) {
     return;
   }
+
   state.hoverCell = null;
   drawBoard();
 }
@@ -1330,45 +1334,52 @@ function locateCell(event) {
     return null;
   }
 
-  // 获取更精确的边界矩形
   const rect = canvas.getBoundingClientRect();
-  const size = rect.width;
-  if (!Number.isFinite(size) || size <= 0) {
+  const width = rect.width;
+  const height = rect.height;
+
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
     return null;
   }
 
-  const gap = (size - BOARD_PADDING * 2) / (BOARD_SIZE - 1);
-  if (!Number.isFinite(gap) || gap <= 0) {
+  const playableWidth = width - BOARD_PADDING * 2;
+  const playableHeight = height - BOARD_PADDING * 2;
+  if (playableWidth <= 0 || playableHeight <= 0) {
     return null;
   }
 
-  // 计算相对坐标，考虑可能的滚动偏移
-  const relativeX = (point.clientX - rect.left) - BOARD_PADDING;
-  const relativeY = (point.clientY - rect.top) - BOARD_PADDING;
+  const gapX = playableWidth / (BOARD_SIZE - 1);
+  const gapY = playableHeight / (BOARD_SIZE - 1);
 
-  const x = relativeX / gap;
-  const y = relativeY / gap;
-  const gridX = Math.round(x);
-  const gridY = Math.round(y);
+  const offsetX = (point.clientX - rect.left) - BOARD_PADDING;
+  const offsetY = (point.clientY - rect.top) - BOARD_PADDING;
 
-  // 边界检查
+  if (offsetX < -gapX || offsetY < -gapY || offsetX > playableWidth + gapX || offsetY > playableHeight + gapY) {
+    return null;
+  }
+
+  const normalizedX = offsetX / gapX;
+  const normalizedY = offsetY / gapY;
+
+  const gridX = Math.round(normalizedX);
+  const gridY = Math.round(normalizedY);
+
   if (gridX < 0 || gridX >= BOARD_SIZE || gridY < 0 || gridY >= BOARD_SIZE) {
     return null;
   }
 
-  // 动态调整容差：移动设备使用更大的容差，桌面设备使用较小的容差
+  const centerX = gridX * gapX;
+  const centerY = gridY * gapY;
+  const deltaX = Math.abs(offsetX - centerX);
+  const deltaY = Math.abs(offsetY - centerY);
+  const distance = Math.hypot(deltaX, deltaY);
+
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
     window.innerWidth <= 768 ||
     ('ontouchstart' in window);
 
-  // 根据gap大小和设备类型调整容差
-  const baseTolerance = isMobile ? 0.6 : 0.4;
-  const tolerance = Math.min(baseTolerance, gap / 20); // 确保容差不会太大
-
-  const dx = Math.abs(gridX - x);
-  const dy = Math.abs(gridY - y);
-
-  if (dx > tolerance || dy > tolerance) {
+  const tolerancePx = Math.min(gapX, gapY) * (isMobile ? 0.52 : 0.42);
+  if (distance > tolerancePx) {
     return null;
   }
 
@@ -1381,58 +1392,27 @@ function adjustCanvasSize() {
     return;
   }
 
-  // 获取容器宽度作为基准
-  const appShell = document.querySelector('.app-shell');
-  const skillsPanel = elements.skillGrid?.parentElement;
-  const playersContainer = document.querySelector('.players-banner');
-
+  const boardSection = canvas.closest('.board-section');
   let targetWidth = 0;
 
-  // 优先使用技能面板宽度作为参考
-  if (skillsPanel) {
-    targetWidth = skillsPanel.getBoundingClientRect().width;
-  }
-  // 其次使用玩家卡片容器宽度
-  else if (playersContainer) {
-    targetWidth = playersContainer.getBoundingClientRect().width;
-  }
-  // 最后使用app容器宽度
-  else if (appShell) {
-    targetWidth = appShell.getBoundingClientRect().width - 80; // 减去padding
-  }
-
-  // 如果都获取不到，使用父容器宽度
-  if (!targetWidth || targetWidth <= 0) {
-    const parent = canvas.parentElement;
-    const parentWidth = parent ? parent.clientWidth : 0;
-    targetWidth = parentWidth > 0 ? parentWidth : 400;
-  }
-
-  // 减去棋盘容器的padding
-  const boardSection = canvas.closest('.board-section');
   if (boardSection) {
-    const computedStyle = window.getComputedStyle(boardSection);
-    const paddingLeft = parseFloat(computedStyle.paddingLeft) || 0;
-    const paddingRight = parseFloat(computedStyle.paddingRight) || 0;
-    targetWidth = Math.max(220, targetWidth - paddingLeft - paddingRight);
+    const style = window.getComputedStyle(boardSection);
+    const paddingLeft = parseFloat(style.paddingLeft) || 0;
+    const paddingRight = parseFloat(style.paddingRight) || 0;
+    targetWidth = boardSection.clientWidth - paddingLeft - paddingRight;
   }
 
-  let size = targetWidth;
-
-  // 移动端适配
-  const isCompact = window.innerWidth <= 720;
-  if (isCompact) {
-    const viewportHeight = (window.visualViewport && window.visualViewport.height) || window.innerHeight || size;
-    const reservedForPanels = Math.min(Math.max(viewportHeight * 0.4, 240), 380);
-    const availableHeight = viewportHeight - reservedForPanels - 72;
-    const mobileLimit = Math.max(220, Math.min(availableHeight, viewportHeight * 0.62));
-    size = Math.min(size, mobileLimit);
+  if ((!targetWidth || targetWidth <= 0) && canvas.parentElement) {
+    targetWidth = canvas.parentElement.clientWidth || 0;
   }
 
-  // 设置最小和最大尺寸限制
-  size = Math.max(220, Math.min(size, 800));
+  if (!targetWidth || targetWidth <= 0) {
+    targetWidth = 400;
+  }
 
+  const size = Math.max(220, Math.min(targetWidth, 800));
   const dpr = window.devicePixelRatio || 1;
+
   canvas.style.maxWidth = '100%';
   canvas.style.width = `${size}px`;
   canvas.style.height = `${size}px`;
@@ -1651,22 +1631,6 @@ function updateSubtitleFromState() {
 
 function updateSubtitle(text) {
   elements.subtitle.textContent = text;
-
-  // 移动端额外显示连接状态
-  if (isMobileDebugMode()) {
-    console.log('状态更新:', text);
-
-    // 如果连接失败，自动显示调试面板
-    if (text.includes('失败') || text.includes('断开') || text.includes('超时')) {
-      setTimeout(() => {
-        const debugToggle = document.getElementById('debug-toggle');
-        if (debugToggle && debugToggle.style.display !== 'none') {
-          debugToggle.style.background = 'rgba(255, 0, 0, 0.8)';
-          debugToggle.textContent = '❗';
-        }
-      }, 1000);
-    }
-  }
 }
 
 function countPlacedStones(board) {
@@ -1984,89 +1948,6 @@ const EffectManager = {
   }
 };
 
-// 移动端调试功能
-let debugLog = [];
-let originalConsoleLog = console.log;
-let originalConsoleError = console.error;
-let originalConsoleWarn = console.warn;
-
-function isMobileDebugMode() {
-  return window.innerWidth <= 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-}
-
-function addDebugLog(message, type = 'log') {
-  const timestamp = new Date().toLocaleTimeString();
-  const logEntry = `[${timestamp}] ${type.toUpperCase()}: ${message}`;
-  debugLog.push(logEntry);
-
-  // 保持最近100条日志
-  if (debugLog.length > 100) {
-    debugLog.shift();
-  }
-
-  // 更新调试面板
-  const debugLogElement = document.getElementById('debug-log');
-  if (debugLogElement) {
-    debugLogElement.textContent = debugLog.join('\n');
-    debugLogElement.scrollTop = debugLogElement.scrollHeight;
-  }
-}
-
-// 重写console方法以捕获日志
-if (isMobileDebugMode()) {
-  console.log = function (...args) {
-    originalConsoleLog.apply(console, args);
-    addDebugLog(args.join(' '), 'log');
-  };
-
-  console.error = function (...args) {
-    originalConsoleError.apply(console, args);
-    addDebugLog(args.join(' '), 'error');
-  };
-
-  console.warn = function (...args) {
-    originalConsoleWarn.apply(console, args);
-    addDebugLog(args.join(' '), 'warn');
-  };
-}
-
-function toggleMobileDebug() {
-  const debugPanel = document.getElementById('mobile-debug');
-  const debugToggle = document.getElementById('debug-toggle');
-
-  if (debugPanel.style.display === 'none') {
-    debugPanel.style.display = 'flex';
-    debugToggle.style.display = 'none';
-  } else {
-    debugPanel.style.display = 'none';
-    debugToggle.style.display = 'block';
-  }
-}
-
-function clearDebugLog() {
-  debugLog = [];
-  const debugLogElement = document.getElementById('debug-log');
-  if (debugLogElement) {
-    debugLogElement.textContent = '';
-  }
-}
-
-function testConnection() {
-  addDebugLog('用户手动测试连接', 'info');
-  handleReconnect();
-}
-
-// 显示调试按钮（仅移动端）
-if (isMobileDebugMode()) {
-  document.addEventListener('DOMContentLoaded', () => {
-    const debugToggle = document.getElementById('debug-toggle');
-    if (debugToggle) {
-      debugToggle.style.display = 'block';
-    }
-  });
-}
-
-// 全局错误处理
 window.addEventListener('error', function (event) {
   console.error('JavaScript错误:', event.error);
 });
