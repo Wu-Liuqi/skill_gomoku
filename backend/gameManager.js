@@ -1,4 +1,5 @@
 ﻿const { v4: uuid } = require('uuid');
+const { WebSocket } = require('ws');
 const { GameSession, GameError } = require('./gameSession');
 
 class GameManager {
@@ -22,6 +23,8 @@ class GameManager {
       session = new GameSession(targetRoom);
       this.sessions.set(targetRoom, session);
     }
+
+    this._cleanupStaleClients(session);
 
     const joinInfo = session.attachClient(clientId, displayName);
     this.clients.get(clientId).sessionId = targetRoom;
@@ -139,6 +142,31 @@ class GameManager {
       this.removeClient(clientId);
     }
   }
+
+  _cleanupStaleClients(session) {
+    const staleIds = [];
+
+    for (const [participantId] of session.clients) {
+      const clientMeta = this.clients.get(participantId);
+      const isOpen = clientMeta && clientMeta.ws && clientMeta.ws.readyState === WebSocket.OPEN;
+
+      if (!clientMeta || !isOpen) {
+        staleIds.push(participantId);
+      }
+    }
+
+    for (const staleId of staleIds) {
+      const meta = this.clients.get(staleId);
+      try {
+        meta?.ws?.terminate?.();
+      } catch (_) {
+        // ignore termination errors
+      }
+      session.detachClient(staleId);
+      this.clients.delete(staleId);
+    }
+  }
+
 }
 
 module.exports = {

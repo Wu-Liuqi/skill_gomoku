@@ -46,33 +46,56 @@ const SKILL_META = {
 // TTS音频管理器
 class TTSAudioManager {
   constructor() {
-    this.enabled = localStorage.getItem('skills-gomoku-audio') !== 'false';
+    this.supported = typeof window !== 'undefined'
+      && typeof window.speechSynthesis !== 'undefined'
+      && typeof window.SpeechSynthesisUtterance === 'function';
+
     this.volume = 0.7;
     this.rate = 1.0;
     this.pitch = 1.0;
     this.voice = null;
-    this.initVoice();
+
+    this.enabled = this.supported;
+    this.notifiedUnsupported = !this.supported;
+
+    if (this.supported) {
+      try {
+        const stored = localStorage.getItem('skills-gomoku-audio');
+        if (stored !== null) {
+          this.enabled = stored !== 'false';
+        }
+      } catch (err) {
+        console.warn('Unable to read audio preference; using default setting', err);
+        this.enabled = true;
+      }
+
+      this.initVoice();
+    } else {
+      this.enabled = false;
+    }
   }
 
   initVoice() {
+    if (!this.supported) {
+      return;
+    }
+
     const setVoice = () => {
-      const voices = speechSynthesis.getVoices();
+      const voices = window.speechSynthesis.getVoices();
       // 优先选择中文语音
       this.voice = voices.find(voice =>
         voice.lang.includes('zh') || voice.lang.includes('CN')
       ) || voices[0];
     };
 
-    if (speechSynthesis.getVoices().length) {
+    if (window.speechSynthesis.getVoices().length) {
       setVoice();
     } else {
-      speechSynthesis.onvoiceschanged = setVoice;
+      window.speechSynthesis.onvoiceschanged = setVoice;
     }
   }
 
   playSkillSound(skillId) {
-    if (!this.enabled || !('speechSynthesis' in window)) return;
-
     const skillNames = {
       'flying-sand': '飞沙走石',
       'calm-water': '静如止水',
@@ -84,76 +107,112 @@ class TTSAudioManager {
       'see-you-again': 'See you again'
     };
 
-    const text = skillNames[skillId];
-    if (!text) return;
-
-    // 停止当前播放的语音
-    speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.volume = this.volume;
-    utterance.rate = this.rate;
-    utterance.pitch = this.pitch;
-
-    if (this.voice) {
-      utterance.voice = this.voice;
-    }
-
-    speechSynthesis.speak(utterance);
+    this.safeSpeak(skillNames[skillId]);
   }
 
   playMoveSound() {
-    if (!this.enabled || !('speechSynthesis' in window)) return;
-
-    // 停止当前播放的语音
-    speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance('嘿');
-    utterance.volume = this.volume;
-    utterance.rate = this.rate + 0.2; // 落子音效稍快一些
-    utterance.pitch = this.pitch;
-
-    if (this.voice) {
-      utterance.voice = this.voice;
-    }
-
-    speechSynthesis.speak(utterance);
+    this.safeSpeak('嘿', { rateOffset: 0.2 });
   }
 
   playVictorySound(winner) {
-    if (!this.enabled || !('speechSynthesis' in window)) return;
-
     const victoryTexts = {
-      black: "黑棋获胜",
-      white: "白棋获胜"
+      black: '黑棋获胜',
+      white: '白棋获胜'
     };
 
-    const text = victoryTexts[winner];
-    if (!text) return;
-
-    // 停止当前播放的语音
-    speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.volume = this.volume;
-    utterance.rate = this.rate - 0.1; // 胜利音效稍慢一些，更庄重
-    utterance.pitch = this.pitch + 0.1; // 稍微提高音调，表示喜悦
-
-    if (this.voice) {
-      utterance.voice = this.voice;
+    const phrase = victoryTexts[winner];
+    if (!phrase) {
+      return;
     }
 
-    speechSynthesis.speak(utterance);
+    this.safeSpeak(phrase, { rateOffset: -0.1, pitchOffset: 0.1 });
   }
 
   toggle() {
+    if (!this.supported) {
+      return false;
+    }
+
     this.enabled = !this.enabled;
-    localStorage.setItem('skills-gomoku-audio', this.enabled.toString());
+
+    try {
+      localStorage.setItem('skills-gomoku-audio', this.enabled.toString());
+    } catch (err) {
+      console.warn('Unable to persist audio preference', err);
+    }
+
     return this.enabled;
   }
 
   isEnabled() {
     return this.enabled;
+  }
+
+  isSupported() {
+    return this.supported;
+  }
+
+  safeSpeak(text, { rateOffset = 0, pitchOffset = 0 } = {}) {
+    if (!text || !this.supported || !this.enabled) {
+      return;
+    }
+
+    try {
+      const speech = typeof window !== 'undefined' ? window.speechSynthesis : null;
+      const Utterance = typeof window !== 'undefined' ? window.SpeechSynthesisUtterance : null;
+
+      if (!speech || typeof speech.speak !== 'function' || typeof Utterance !== 'function') {
+        throw new Error('Speech synthesis API unavailable');
+      }
+
+      speech.cancel();
+
+      const utterance = new Utterance(text);
+      utterance.volume = this.volume;
+      utterance.rate = this.rate + rateOffset;
+      utterance.pitch = this.pitch + pitchOffset;
+
+      if (this.voice) {
+        utterance.voice = this.voice;
+      }
+
+      speech.speak(utterance);
+    } catch (err) {
+      console.warn('Speech synthesis play failed; disabling audio features', err);
+      this.supported = false;
+      this.enabled = false;
+      this.persistDisabled();
+      this.notifyUnsupported();
+    }
+  }
+
+  persistDisabled() {
+    try {
+      localStorage.setItem('skills-gomoku-audio', 'false');
+    } catch (_) {
+      // ignore storage errors
+    }
+  }
+
+  notifyUnsupported() {
+    if (this.notifiedUnsupported || typeof window === 'undefined') {
+      return;
+    }
+
+    this.notifiedUnsupported = true;
+    const eventName = 'skills-gomoku-audio-unsupported';
+
+    try {
+      window.dispatchEvent(new CustomEvent(eventName));
+    } catch (_) {
+      try {
+        const event = document.createEvent('Event');
+        event.initEvent(eventName, true, true);
+        window.dispatchEvent(event);
+      } catch (innerErr) {
+        console.warn('Unable to dispatch unsupported audio event', innerErr);
+      }
+    }
   }
 }
 
@@ -821,15 +880,36 @@ function legacyCopy(text) {
 }
 
 function handleAudioToggle() {
+  if (!audioManager.isSupported()) {
+    showToast('当前浏览器暂不支持音效功能', 'warning');
+    return;
+  }
+
   const enabled = audioManager.toggle();
   updateAudioToggleButton();
   showToast(enabled ? '音效已开启' : '音效已关闭', 'info');
 }
 
 function updateAudioToggleButton() {
+  const supported = audioManager.isSupported();
   const enabled = audioManager.isEnabled();
-  elements.audioToggleBtn.textContent = enabled ? '🔊 音效' : '🔇 音效';
+
+  if (!supported) {
+    elements.audioToggleBtn.textContent = '🔇 音效不可用';
+  } else {
+    elements.audioToggleBtn.textContent = enabled ? '🔊 音效' : '🔇 音效';
+  }
+
   elements.audioToggleBtn.classList.toggle('disabled', !enabled);
+  elements.audioToggleBtn.disabled = !supported;
+  elements.audioToggleBtn.setAttribute('aria-disabled', (!supported).toString());
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('skills-gomoku-audio-unsupported', () => {
+    updateAudioToggleButton();
+    showToast('当前浏览器暂不支持音效功能', 'warning', 6000);
+  }, { once: true });
 }
 
 function handleReconnect() {
@@ -1109,9 +1189,21 @@ function handleBoardClick(event) {
   }
 
   if (!canOperateNow()) {
-    showToast('当前无法落子', 'warning');
+    const reason = getOperationBlockReason();
+    if (reason) {
+      console.warn('[board] 阻止落子:', reason, {
+        role: state.role,
+        color: state.color,
+        currentTurn: state.game?.currentTurn,
+        freeze: state.game?.freeze
+      });
+      showToast(reason, 'warning');
+    } else {
+      showToast('当前无法落子', 'warning');
+    }
     return;
   }
+
 
   if (state.game?.board?.[cell.y]?.[cell.x]) {
     showToast('该位置已有棋子', 'warning');
@@ -1479,19 +1571,30 @@ function drawStone(ctx, color, position, gap) {
 }
 
 function canOperateNow() {
-  if (!state.game || state.role !== 'player') {
-    return false;
+  return !getOperationBlockReason();
+}
+
+function getOperationBlockReason() {
+  if (!state.game) {
+    return '棋局状态尚未同步，请稍候';
+  }
+  if (state.role !== 'player') {
+    return '当前为观战身份，无法落子';
   }
   if (state.game.winner) {
-    return false;
+    return '对局已结束';
   }
   if (state.game.currentTurn !== state.color) {
-    return false;
+    const opponentName = state.color === 'black'
+      ? ((state.game.players && state.game.players.white && state.game.players.white.displayName) || '白方')
+      : ((state.game.players && state.game.players.black && state.game.players.black.displayName) || '黑方');
+    return `等待 ${opponentName} 落子`;
   }
-  if ((state.game.freeze && state.game.freeze[state.color] || 0) > 0) {
-    return false;
+  const freezeTurns = (state.game.freeze && state.game.freeze[state.color]) || 0;
+  if (freezeTurns > 0) {
+    return `你被“静如止水”冻结，还需等待 ${freezeTurns} 回合`;
   }
-  return true;
+  return null;
 }
 
 function updateSubtitleFromState() {

@@ -48,45 +48,32 @@ class GameSession {
   }
 
   attachClient(clientId, displayName) {
-    let role = 'spectator';
-    let color = null;
-
-    if (!this.players.black) {
-      role = 'player';
-      color = 'black';
-    } else if (!this.players.white) {
-      role = 'player';
-      color = 'white';
-    }
-
-    const resolvedName =
-      (displayName && displayName.trim()) ||
-      (color
-        ? DEFAULT_NAMES[color]
-        : `\u89c2\u6218\u8005-${this.spectators.size + 1}`);
+    const providedName = displayName && displayName.trim();
 
     const meta = {
       id: clientId,
-      role,
-      color,
-      displayName: resolvedName
+      role: 'spectator',
+      color: null,
+      displayName: providedName || null
     };
 
     this.clients.set(clientId, meta);
 
-    if (role === 'player' && color) {
-      this.players[color] = {
-        clientId,
-        displayName: resolvedName
-      };
+    if (this._isSeatAvailable('black')) {
+      this._assignSeat('black', meta);
+    } else if (this._isSeatAvailable('white')) {
+      this._assignSeat('white', meta);
     } else {
-      this.spectators.add(clientId);
+      this._assignSpectator(meta);
     }
 
+    this._rebalanceSeats();
+
+    const updated = this.clients.get(clientId);
     return {
-      role,
-      color,
-      displayName: resolvedName,
+      role: updated.role,
+      color: updated.color,
+      displayName: updated.displayName,
       state: this.serialize()
     };
   }
@@ -106,6 +93,83 @@ class GameSession {
     }
 
     this.clients.delete(clientId);
+    this._rebalanceSeats();
+  }
+
+  _assignSeat(color, meta) {
+    if (!meta) {
+      return;
+    }
+
+    const resolvedName = meta.displayName && meta.displayName.trim()
+      ? meta.displayName.trim()
+      : DEFAULT_NAMES[color];
+
+    meta.role = 'player';
+    meta.color = color;
+    meta.displayName = resolvedName;
+
+    this.players[color] = {
+      clientId: meta.id,
+      displayName: resolvedName
+    };
+
+    this.spectators.delete(meta.id);
+  }
+
+  _assignSpectator(meta) {
+    const resolvedName = meta.displayName && meta.displayName.trim()
+      ? meta.displayName.trim()
+      : '\u89c2\u6218\u8005-' + (this.spectators.size + 1);
+
+    meta.role = 'spectator';
+    meta.color = null;
+    meta.displayName = resolvedName;
+    this.spectators.add(meta.id);
+  }
+
+  _isSeatAvailable(color) {
+    const seat = this.players[color];
+    if (!seat) {
+      return true;
+    }
+
+    const meta = this.clients.get(seat.clientId);
+    return !meta || meta.role !== 'player';
+  }
+
+  _nextSpectator() {
+    for (const spectatorId of Array.from(this.spectators)) {
+      const candidate = this.clients.get(spectatorId);
+      if (candidate) {
+        this.spectators.delete(spectatorId);
+        return candidate;
+      }
+
+      this.spectators.delete(spectatorId);
+    }
+
+    return null;
+  }
+
+  _rebalanceSeats() {
+    for (const color of ['black', 'white']) {
+      const seat = this.players[color];
+      const meta = seat ? this.clients.get(seat.clientId) : null;
+
+      if (!meta || meta.role !== 'player') {
+        if (seat && meta) {
+          this._assignSpectator(meta);
+        }
+
+        this.players[color] = null;
+
+        const replacement = this._nextSpectator();
+        if (replacement) {
+          this._assignSeat(color, replacement);
+        }
+      }
+    }
   }
 
   isEmpty() {
