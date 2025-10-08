@@ -72,23 +72,23 @@ class TTSAudioManager {
       } catch (err) {
         console.warn('Unable to read audio preference; using default setting', err);
         this.enabled = true;
-      }
-
+      }
+
       this.initVoice();
     } else {
       this.enabled = false;
-    }
-
+    }
+
     if (this.enabled && !this.supportsSpeech) {
       this.unlockAudioContext();
     }
-  }
-
+  }
+
   initVoice() {
     if (!this.supportsSpeech) {
       return;
-    }
-
+    }
+
     const setVoice = () => {
       const voices = window.speechSynthesis.getVoices();
       // 优先选择中文语音
@@ -102,27 +102,27 @@ class TTSAudioManager {
     } else {
       window.speechSynthesis.onvoiceschanged = setVoice;
     }
-  }
-
+  }
+
   playSkillSound(skillId) {
     const skillNames = {
       'flying-sand': '飞沙走石',
-      'calm-water': '静如止水',
-      'yale-ya': '呀嘞呀',
-      'capture': '擒拿擒拿',
+      'calm-water': '静水止淳',
+      'yale-ya': '耶勒耶',
+      'capture': '拘魂斩',
       'rewind': '时光倒流',
-      'reset-board': '力拔山兮',
-      'restore': '东山再起',
-      'see-you-again': 'See you again'
+      'reset-board': '重置棋局',
+      'restore': '复原旧局',
+      'see-you-again': '再会之术'
     };
 
     this.safeSpeak(skillNames[skillId] || skillId);
-  }
-
+  }
+
   playMoveSound() {
-    this.safeSpeak('嘿', { rateOffset: 0.2 });
-  }
-
+    this.safeSpeak('嘿', { rateOffset: 0.15, pitchOffset: 0.05 });
+  }
+
   playVictorySound(winner) {
     const victoryTexts = {
       black: '黑棋获胜',
@@ -132,47 +132,47 @@ class TTSAudioManager {
     const phrase = victoryTexts[winner];
     if (!phrase) {
       return;
-    }
-
+    }
+
     this.safeSpeak(phrase, { rateOffset: -0.1, pitchOffset: 0.1 });
-  }
-
+  }
+
   toggle() {
     if (!this.supported) {
       return false;
-    }
-
+    }
+
     this.enabled = !this.enabled;
 
     try {
       localStorage.setItem('skills-gomoku-audio', this.enabled.toString());
     } catch (err) {
       console.warn('Unable to persist audio preference', err);
-    }
-
+    }
+
     if (this.enabled) {
       this.unlockAudioContext();
-    }
-
+    }
+
     return this.enabled;
-  }
-
+  }
+
   unlockAudioContext() {
     if (!this.AudioContextClass) {
       return;
-    }
-
+    }
+
     const ctx = this.ensureAudioContext();
     if (ctx && ctx.state === 'suspended') {
       ctx.resume().catch(() => {});
     }
-  }
-
+  }
+
   ensureAudioContext() {
     if (!this.AudioContextClass) {
       return null;
-    }
-
+    }
+
     if (!this.audioContext) {
       try {
         this.audioContext = new this.AudioContextClass();
@@ -182,11 +182,11 @@ class TTSAudioManager {
         this.AudioContextClass = null;
         return null;
       }
-    }
-
+    }
+
     return this.audioContext;
-  }
-
+  }
+
   getToneFrequency(text, pitchOffset = 0) {
     let hash = 0;
     if (text) {
@@ -196,18 +196,18 @@ class TTSAudioManager {
     }
     const base = this.toneBaseFrequency || 520;
     return base + hash * 6 + pitchOffset * 120;
-  }
-
+  }
+
   playTone(frequency, duration = 0.24, volume = 0.14) {
     const ctx = this.ensureAudioContext();
     if (!ctx) {
       return false;
-    }
-
+    }
+
     if (ctx.state === 'suspended') {
       ctx.resume().catch(() => {});
-    }
-
+    }
+
     const oscillator = ctx.createOscillator();
     const gain = ctx.createGain();
 
@@ -226,8 +226,8 @@ class TTSAudioManager {
     oscillator.stop(start + duration + 0.05);
 
     return true;
-  }
-
+  }
+
   disableAudioOutput() {
     this.supported = false;
     this.enabled = false;
@@ -235,21 +235,21 @@ class TTSAudioManager {
     this.audioContext = null;
     this.persistDisabled();
     this.notifyUnsupported();
-  }
-
+  }
+
   isEnabled() {
     return this.enabled;
-  }
-
+  }
+
   isSupported() {
     return this.supported;
-  }
-
+  }
+
   safeSpeak(text, { rateOffset = 0, pitchOffset = 0 } = {}) {
     if (!text || !this.enabled || !this.supported) {
       return;
-    }
-
+    }
+
     if (this.supportsSpeech) {
       try {
         const speech = typeof window !== 'undefined' ? window.speechSynthesis : null;
@@ -257,8 +257,8 @@ class TTSAudioManager {
 
         if (!speech || typeof speech.speak !== 'function' || typeof Utterance !== 'function') {
           throw new Error('Speech synthesis API unavailable');
-        }
-
+        }
+
         speech.cancel();
 
         const utterance = new Utterance(text);
@@ -268,16 +268,16 @@ class TTSAudioManager {
 
         if (this.voice) {
           utterance.voice = this.voice;
-        }
-
+        }
+
         speech.speak(utterance);
         return;
       } catch (err) {
         console.warn('Speech synthesis play failed; using fallback tone', err);
         this.supportsSpeech = false;
       }
-    }
-
+    }
+
     const duration = 0.24 + Math.max(0, rateOffset) * 0.08;
     const success = this.playTone(
       this.getToneFrequency(text, pitchOffset),
@@ -287,21 +287,21 @@ class TTSAudioManager {
     if (!success) {
       this.disableAudioOutput();
     }
-  }
-
+  }
+
   persistDisabled() {
     try {
       localStorage.setItem('skills-gomoku-audio', 'false');
     } catch (_) {
       // ignore storage errors
     }
-  }
-
+  }
+
   notifyUnsupported() {
     if (this.notifiedUnsupported || typeof window === 'undefined') {
       return;
-    }
-
+    }
+
     this.notifiedUnsupported = true;
     const eventName = 'skills-gomoku-audio-unsupported';
 
@@ -457,8 +457,8 @@ function getWebSocketUrls() {
     // 其他情况
     urls.push(`${protocol}://${host}`);     // 直接连接
     urls.push(`${protocol}://${host}/ws`);  // 带/ws路径
-  }
-
+  }
+
   console.log('WebSocket URL候选列表:', urls);
   return urls;
 }
@@ -470,8 +470,8 @@ function checkNetworkAndConnect() {
     showToast('网络连接不可用', 'error', 8000);
     scheduleReconnect(5000);
     return;
-  }
-
+  }
+
   // 尝试ping服务器
   fetch('/health', {
     method: 'GET',
@@ -570,8 +570,8 @@ function wireEvents() {
         canvas.addEventListener('touchend', clearHoverCell, { passive: true });
         canvas.addEventListener('touchcancel', clearHoverCell, { passive: true });
       }
-    }
-
+    }
+
     if (window.ResizeObserver) {
       if (state.resizeObserver) {
         state.resizeObserver.disconnect();
@@ -584,28 +584,28 @@ function wireEvents() {
       // 观察多个元素以确保棋盘大小与其他元素保持一致
       if (canvas.parentElement) {
         state.resizeObserver.observe(canvas.parentElement);
-      }
-
+      }
+
       // 观察app容器
       const appShell = document.querySelector('.app-shell');
       if (appShell) {
         state.resizeObserver.observe(appShell);
-      }
-
+      }
+
       // 观察技能面板
       const skillsPanel = document.querySelector('.skills-panel');
       if (skillsPanel) {
         state.resizeObserver.observe(skillsPanel);
-      }
-
+      }
+
       // 观察玩家卡片容器
       const playersContainer = document.querySelector('.players-banner');
       if (playersContainer) {
         state.resizeObserver.observe(playersContainer);
       }
     }
-  }
-
+  }
+
   const handleResize = () => {
     adjustCanvasSize();
     drawBoard();
@@ -615,8 +615,8 @@ function wireEvents() {
 
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', handleResize);
-  }
-
+  }
+
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && state.selection) {
       cancelSelection('取消当前技能目标选择');
@@ -629,8 +629,8 @@ function setupMobilePanels() {
   const panels = elements.mobilePanels;
   if (!Array.isArray(buttons) || buttons.length === 0 || !Array.isArray(panels) || panels.length === 0) {
     return;
-  }
-
+  }
+
   const fallback = (panels[0] && panels[0].dataset && panels[0].dataset.panel) || 'info';
   let preferred = fallback;
 
@@ -641,8 +641,8 @@ function setupMobilePanels() {
     }
   } catch (err) {
     console.warn('无法读取面板偏好', err);
-  }
-
+  }
+
   const mediaQuery = window.matchMedia('(max-width: 640px)');
 
   const apply = (panelId, options = {}) => {
@@ -676,8 +676,8 @@ function setupMobilePanels() {
       } catch (err) {
         console.warn('无法保存面板偏好', err);
       }
-    }
-
+    }
+
     adjustCanvasSize();
     drawBoard();
   };
@@ -698,8 +698,8 @@ function setupMobilePanels() {
     mediaQuery.addEventListener('change', handleMediaChange);
   } else if (typeof mediaQuery.addListener === 'function') {
     mediaQuery.addListener(handleMediaChange);
-  }
-
+  }
+
   setActive(preferred, { skipPersist: true });
 }
 
@@ -805,8 +805,8 @@ function handleSocketMessage(event) {
   } catch (err) {
     console.warn('无法解析消息', err);
     return;
-  }
-
+  }
+
   const { type, payload } = message;
   console.log('解析后的消息:', { type, payload });
 
@@ -844,8 +844,8 @@ function sendJoin() {
   if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
     console.log('WebSocket未连接，无法发送join');
     return;
-  }
-
+  }
+
   const joinData = {
     roomId: state.roomId,
     displayName: state.displayName
@@ -858,8 +858,8 @@ function sendJoin() {
 function applyJoinResult(payload) {
   if (!payload) {
     return;
-  }
-
+  }
+
   state.roomId = payload.roomId || state.roomId;
   state.role = payload.role || state.role;
   state.color = payload.color || null;
@@ -869,15 +869,15 @@ function applyJoinResult(payload) {
     const url = new URL(window.location.href);
     url.searchParams.set('room', state.roomId);
     window.history.replaceState(null, '', url.toString());
-  }
-
+  }
+
   elements.roomCode.textContent = state.roomId || '--';
   elements.copyRoom.disabled = !state.roomId;
 
   if (payload.state) {
     applyGameState(payload.state);
-  }
-
+  }
+
   const identity = state.role === 'player'
     ? `已加入房间，身份：${state.color === 'black' ? '黑棋（子琪）' : '白棋（张呈）'}`
     : '以观战者身份加入房间';
@@ -887,22 +887,22 @@ function applyJoinResult(payload) {
 function applyGameState(gameState) {
   if (!gameState) {
     return;
-  }
-
+  }
+
   const previousGame = state.game;
   state.game = gameState;
 
   // 检查是否有获胜者（新的获胜）
   if (gameState.winner && (!previousGame || !previousGame.winner)) {
     EffectManager.createVictoryEffect(gameState.winner);
-  }
-
+  }
+
   // 检查是否有新的棋子放置
   if (gameState.lastPlacement && previousGame) {
     const { x, y } = gameState.lastPlacement;
     EffectManager.createParticles(x, y, gameState.currentTurn === 'black' ? '#333' : '#fff', 4);
-  }
-
+  }
+
   if (state.selection) {
     const skillId = state.selection.skill.id;
     const ownerSkills = (gameState.skills && gameState.skills[state.color || 'black']) || [];
@@ -910,8 +910,8 @@ function applyGameState(gameState) {
     if (!skillNow || skillNow.used || !skillNow.available) {
       cancelSelection();
     }
-  }
-
+  }
+
   updateUiFromState();
   drawBoard();
 }
@@ -928,8 +928,8 @@ function sendMessage(type, payload) {
   if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
     console.log('WebSocket未连接，无法发送消息:', type);
     return;
-  }
-
+  }
+
   const message = { type, payload };
   console.log('发送WebSocket消息:', message);
 
@@ -1002,8 +1002,8 @@ function handleAudioToggle() {
   if (!audioManager.isSupported()) {
     showToast('当前浏览器暂不支持音效功能', 'warning');
     return;
-  }
-
+  }
+
   const enabled = audioManager.toggle();
   updateAudioToggleButton();
   showToast(enabled ? '音效已开启' : '音效已关闭', 'info');
@@ -1017,8 +1017,8 @@ function updateAudioToggleButton() {
     elements.audioToggleBtn.textContent = '🔇 音效不可用';
   } else {
     elements.audioToggleBtn.textContent = enabled ? '🔊 音效' : '🔇 音效';
-  }
-
+  }
+
   elements.audioToggleBtn.classList.toggle('disabled', !supported);
   elements.audioToggleBtn.disabled = !supported;
   elements.audioToggleBtn.setAttribute('aria-disabled', (!supported).toString());
@@ -1051,8 +1051,8 @@ function updateUiFromState() {
   const { game } = state;
   if (!game) {
     return;
-  }
-
+  }
+
   const moveCount = countPlacedStones(game.board);
   elements.turnNumber.textContent = (game.turnNumber !== undefined && game.turnNumber !== null) ? game.turnNumber : moveCount;
   elements.moveCount.textContent = moveCount;
@@ -1070,8 +1070,8 @@ function updateUiFromState() {
   }
   if (game.players && game.players.white) {
     elements.playerWhiteName.textContent = game.players.white.displayName;
-  }
-
+  }
+
   updatePlayerCard('black');
   updatePlayerCard('white');
   renderSkillGrid();
@@ -1108,8 +1108,8 @@ function renderSkillGrid() {
   if (!game || !game.skills) {
     elements.skillGrid.innerHTML = '<p class="empty-hint">等待数据...</p>';
     return;
-  }
-
+  }
+
   const owner = state.color || 'black';
   const skillList = game.skills[owner] || [];
   const ownerName = (game.players && game.players[owner] && game.players[owner].displayName) || (owner === 'black' ? '子琪' : '张呈');
@@ -1141,12 +1141,12 @@ function renderSkillGrid() {
     } else {
       statusTag.classList.add('ready');
       statusTag.textContent = '就绪';
-    }
-
+    }
+
     if (state.selection && state.selection.skill && state.selection.skill.id === skill.id) {
       card.classList.add('selected');
-    }
-
+    }
+
     card.innerHTML = `
       <header>
         <span class="skill-name">${skill.name}</span>
@@ -1158,8 +1158,8 @@ function renderSkillGrid() {
 
     if (!card.classList.contains('disabled') && !card.classList.contains('used')) {
       card.addEventListener('click', () => handleSkillClick(skill));
-    }
-
+    }
+
     fragment.appendChild(card);
   });
 
@@ -1171,8 +1171,8 @@ function handleSkillClick(skill) {
   if (!canOperateNow()) {
     showToast('当前无法使用技能（可能未轮到你或处于冻结状态）', 'warning');
     return;
-  }
-
+  }
+
   const meta = SKILL_META[skill.id];
   if (!meta) {
     // 播放技能音效
@@ -1181,12 +1181,12 @@ function handleSkillClick(skill) {
     EffectManager.createSkillEffect(skill.id);
     sendMessage('skill', { skillId: skill.id });
     return;
-  }
-
+  }
+
   if (meta.confirm && !window.confirm(meta.confirm)) {
     return;
-  }
-
+  }
+
   if (meta.requiresInput) {
     const turn = window.prompt(meta.prompt, '0');
     if (turn === null) {
@@ -1203,13 +1203,13 @@ function handleSkillClick(skill) {
     EffectManager.createSkillEffect(skill.id);
     sendMessage('skill', { skillId: skill.id, data: { turnNumber: parsed } });
     return;
-  }
-
+  }
+
   if (meta.targetType === 'opponent') {
     startTargetSelection(skill, meta);
     return;
-  }
-
+  }
+
   // 播放技能音效
   audioManager.playSkillSound(skill.id);
   // 触发技能特效
@@ -1263,20 +1263,20 @@ function handleBoardClick(event) {
 
   if ((!cell || typeof cell.x !== 'number' || typeof cell.y !== 'number') && state.lastInputWasTouch && state.lastTouchCell) {
     cell = { ...state.lastTouchCell };
-  }
-
+  }
+
   state.lastInputWasTouch = false;
 
   if (!cell || typeof cell.x !== 'number' || typeof cell.y !== 'number') {
     return;
-  }
-
+  }
+
   if (state.selection) {
     handleSelectionClick(cell);
     state.lastTouchCell = null;
     return;
-  }
-
+  }
+
   if (!canOperateNow()) {
     const reason = getOperationBlockReason();
     if (reason) {
@@ -1292,14 +1292,14 @@ function handleBoardClick(event) {
     }
     state.lastTouchCell = null;
     return;
-  }
-
+  }
+
   if (state.game?.board?.[cell.y]?.[cell.x]) {
     showToast('该位置已有棋子', 'warning');
     state.lastTouchCell = null;
     return;
-  }
-
+  }
+
   audioManager.playMoveSound();
   sendMessage('move', cell);
   state.lastTouchCell = null;
@@ -1315,8 +1315,8 @@ function handleSelectionClick(cell) {
   if (!isValid) {
     showToast('该位置不是有效目标', 'warning');
     return;
-  }
-
+  }
+
   const existingIndex = selection.targets.findIndex((target) => target.x === cell.x && target.y === cell.y);
   if (existingIndex >= 0) {
     selection.targets.splice(existingIndex, 1);
@@ -1326,8 +1326,8 @@ function handleSelectionClick(cell) {
       return;
     }
     selection.targets.push(cell);
-  }
-
+  }
+
   if (selection.targets.length > 0 && (!selection.meta.maxTargets || selection.targets.length === selection.meta.maxTargets)) {
     // 播放技能音效
     audioManager.playSkillSound(selection.skill.id);
@@ -1341,8 +1341,8 @@ function handleSelectionClick(cell) {
       data: { positions: selection.targets }
     });
     state.selection = null;
-  }
-
+  }
+
   updateSubtitleFromState();
   drawBoard();
 }
@@ -1350,17 +1350,17 @@ function handleSelectionClick(cell) {
 function handleBoardHover(event) {
   if (event && event.touches && event.touches.length > 1) {
     return;
-  }
-
+  }
+
   if (event && typeof event.isPrimary === 'boolean' && event.isPrimary === false) {
     return;
-  }
-
+  }
+
   const isTouchEvent = !!(event && (event.type.startsWith('touch') || (typeof event.pointerType === 'string' && event.pointerType === 'touch')));
   if (isTouchEvent && event && event.cancelable && typeof event.preventDefault === 'function') {
     event.preventDefault();
-  }
-
+  }
+
   const isTouchStart = event && event.type === 'touchstart';
   const cell = locateCell(event);
 
@@ -1369,8 +1369,8 @@ function handleBoardHover(event) {
     if (cell) {
       state.lastTouchCell = cell;
     }
-  }
-
+  }
+
   const previous = state.hoverCell;
   const changed = (previous?.x !== cell?.x) || (previous?.y !== cell?.y);
 
@@ -1393,12 +1393,12 @@ function clearHoverCell(event) {
   if (!isTouchEvent) {
     state.lastTouchCell = null;
     state.lastInputWasTouch = false;
-  }
-
+  }
+
   if (!state.hoverCell) {
     return;
-  }
-
+  }
+
   state.hoverCell = null;
   drawBoard();
 }
@@ -1407,23 +1407,23 @@ function clearHoverCell(event) {
 function getInputPoint(event) {
   if (!event) {
     return null;
-  }
-
+  }
+
   // 优先处理触摸事件，确保获取正确的触摸点
   if (event.touches && event.touches.length > 0) {
     return event.touches[0];
-  }
-
+  }
+
   // 处理触摸结束事件
   if (event.changedTouches && event.changedTouches.length > 0) {
     return event.changedTouches[0];
-  }
-
+  }
+
   // 处理鼠标事件
   if (typeof event.clientX === 'number' && typeof event.clientY === 'number') {
     return event;
-  }
-
+  }
+
   return null;
 }
 
@@ -1435,22 +1435,22 @@ function locateCell(event) {
   const point = getInputPoint(event);
   if (!point) {
     return null;
-  }
-
+  }
+
   const rect = canvas.getBoundingClientRect();
   const width = rect.width;
   const height = rect.height;
 
   if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
     return null;
-  }
-
+  }
+
   const playableWidth = width - BOARD_PADDING * 2;
   const playableHeight = height - BOARD_PADDING * 2;
   if (playableWidth <= 0 || playableHeight <= 0) {
     return null;
-  }
-
+  }
+
   const gapX = playableWidth / (BOARD_SIZE - 1);
   const gapY = playableHeight / (BOARD_SIZE - 1);
 
@@ -1459,8 +1459,8 @@ function locateCell(event) {
 
   if (offsetX < -gapX || offsetY < -gapY || offsetX > playableWidth + gapX || offsetY > playableHeight + gapY) {
     return null;
-  }
-
+  }
+
   const normalizedX = offsetX / gapX;
   const normalizedY = offsetY / gapY;
 
@@ -1469,8 +1469,8 @@ function locateCell(event) {
 
   if (gridX < 0 || gridX >= BOARD_SIZE || gridY < 0 || gridY >= BOARD_SIZE) {
     return null;
-  }
-
+  }
+
   const centerX = gridX * gapX;
   const centerY = gridY * gapY;
   const deltaX = Math.abs(offsetX - centerX);
@@ -1484,8 +1484,8 @@ function locateCell(event) {
   const tolerancePx = Math.min(gapX, gapY) * (isMobile ? 0.52 : 0.42);
   if (distance > tolerancePx) {
     return null;
-  }
-
+  }
+
   return { x: gridX, y: gridY };
 }
 
@@ -1493,8 +1493,8 @@ function adjustCanvasSize() {
   const canvas = elements.boardCanvas;
   if (!canvas) {
     return;
-  }
-
+  }
+
   const boardSection = canvas.closest('.board-section');
   let targetWidth = 0;
 
@@ -1503,16 +1503,16 @@ function adjustCanvasSize() {
     const paddingLeft = parseFloat(style.paddingLeft) || 0;
     const paddingRight = parseFloat(style.paddingRight) || 0;
     targetWidth = boardSection.clientWidth - paddingLeft - paddingRight;
-  }
-
+  }
+
   if ((!targetWidth || targetWidth <= 0) && canvas.parentElement) {
     targetWidth = canvas.parentElement.clientWidth || 0;
-  }
-
+  }
+
   if (!targetWidth || targetWidth <= 0) {
     targetWidth = 400;
-  }
-
+  }
+
   const size = Math.max(220, Math.min(targetWidth, 800));
   const dpr = window.devicePixelRatio || 1;
 
@@ -1531,8 +1531,8 @@ function drawBoard() {
   const ctx = canvas.getContext('2d');
   if (!ctx) {
     return;
-  }
-
+  }
+
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.scale(dpr, dpr);
@@ -1563,8 +1563,8 @@ function drawBoard() {
     ctx.moveTo(offset, BOARD_PADDING);
     ctx.lineTo(offset, size - BOARD_PADDING);
     ctx.stroke();
-  }
-
+  }
+
   ctx.fillStyle = 'rgba(48, 28, 12, 0.9)';
   STAR_POINTS.forEach(([gx, gy]) => {
     const { x, y } = gridToPixel(gx, gy, gap);
@@ -1581,8 +1581,8 @@ function drawBoard() {
       ctx.arc(pos.x, pos.y, gap * 0.4, 0, Math.PI * 2);
       ctx.fill();
     });
-  }
-
+  }
+
   if (state.game?.board) {
     for (let y = 0; y < BOARD_SIZE; y += 1) {
       for (let x = 0; x < BOARD_SIZE; x += 1) {
@@ -1592,8 +1592,8 @@ function drawBoard() {
         }
       }
     }
-  }
-
+  }
+
   if (state.selection) {
     ctx.strokeStyle = 'rgba(59, 169, 255, 0.9)';
     ctx.lineWidth = 2;
@@ -1603,8 +1603,8 @@ function drawBoard() {
       ctx.arc(px, py, gap * 0.45, 0, Math.PI * 2);
       ctx.stroke();
     });
-  }
-
+  }
+
   if (state.game?.lastPlacement) {
     const { x, y } = state.game.lastPlacement;
     const { x: px, y: py } = gridToPixel(x, y, gap);
@@ -1613,8 +1613,8 @@ function drawBoard() {
     ctx.beginPath();
     ctx.arc(px, py, gap * 0.5, 0, Math.PI * 2);
     ctx.stroke();
-  }
-
+  }
+
   if (state.hoverCell && canOperateNow() && !state.selection) {
     const { x, y } = gridToPixel(state.hoverCell.x, state.hoverCell.y, gap);
     ctx.fillStyle = 'rgba(59, 169, 255, 0.15)';
@@ -1641,8 +1641,8 @@ function drawStone(ctx, color, position, gap) {
   } else {
     gradient.addColorStop(0, '#ffffff');
     gradient.addColorStop(1, '#d7d7d7');
-  }
-
+  }
+
   ctx.fillStyle = gradient;
   ctx.beginPath();
   ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
@@ -1687,41 +1687,41 @@ function updateSubtitleFromState() {
     const total = meta.maxTargets || 1;
     updateSubtitle(`${meta.instruction}（${done}/${total}）`);
     return;
-  }
-
+  }
+
   const { game } = state;
   if (!game) {
     updateSubtitle('等待服务器同步数据...');
     return;
-  }
-
+  }
+
   if (game.winner) {
     const name = game.winner === 'black'
       ? ((game.players && game.players.black && game.players.black.displayName) || '子琪')
       : ((game.players && game.players.white && game.players.white.displayName) || '张呈');
     updateSubtitle(`对局结束，${name} 获胜`);
     return;
-  }
-
+  }
+
   if (!game.players || !game.players.black || !game.players.white) {
     updateSubtitle('等待另一位玩家加入...');
     return;
-  }
-
+  }
+
   if (state.role !== 'player') {
     const actor = game.currentTurn === 'black'
       ? (game.players.black.displayName || '子琪')
       : (game.players.white.displayName || '张呈');
     updateSubtitle(`观战中，轮到 ${actor}`);
     return;
-  }
-
+  }
+
   const freezeTurns = (game.freeze && game.freeze[state.color]) || 0;
   if (freezeTurns > 0) {
     updateSubtitle(`你被静如止水冻结，还需等待 ${freezeTurns} 回合`);
     return;
-  }
-
+  }
+
   if (game.currentTurn === state.color) {
     updateSubtitle('轮到你落子或使用技能');
   } else {
@@ -1803,8 +1803,8 @@ const EffectManager = {
       effect.style.transform = 'translate(-50%, -50%)';
       effect.style.width = '100px';
       effect.style.height = '100px';
-    }
-
+    }
+
     elements.effectOverlay.appendChild(effect);
 
     // 800ms后移除特效
@@ -1837,8 +1837,8 @@ const EffectManager = {
       const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
       startX = viewportWidth / 2;
       startY = viewportHeight / 2;
-    }
-
+    }
+
     // 确保起始位置在视口内
     startX = Math.max(50, Math.min(startX, (window.innerWidth || 320) - 50));
     startY = Math.max(50, Math.min(startY, (window.innerHeight || 568) - 50));
@@ -2060,5 +2060,6 @@ window.addEventListener('unhandledrejection', function (event) {
 });
 
 init();
+
 
 
