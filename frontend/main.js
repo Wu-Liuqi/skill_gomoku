@@ -46,9 +46,14 @@ const SKILL_META = {
 // TTS音频管理器
 class TTSAudioManager {
   constructor() {
-    this.supported = typeof window !== 'undefined'
+    const hasWindow = typeof window !== 'undefined';
+    this.supportsSpeech = hasWindow
       && typeof window.speechSynthesis !== 'undefined'
       && typeof window.SpeechSynthesisUtterance === 'function';
+    this.AudioContextClass = hasWindow ? (window.AudioContext || window.webkitAudioContext || null) : null;
+    this.audioContext = null;
+    this.toneBaseFrequency = 520;
+    this.supported = this.supportsSpeech || !!this.AudioContextClass;
 
     this.volume = 0.7;
     this.rate = 1.0;
@@ -73,10 +78,14 @@ class TTSAudioManager {
     } else {
       this.enabled = false;
     }
+
+    if (this.enabled && !this.supportsSpeech) {
+      this.unlockAudioContext();
+    }
   }
 
   initVoice() {
-    if (!this.supported) {
+    if (!this.supportsSpeech) {
       return;
     }
 
@@ -107,7 +116,7 @@ class TTSAudioManager {
       'see-you-again': 'See you again'
     };
 
-    this.safeSpeak(skillNames[skillId]);
+    this.safeSpeak(skillNames[skillId] || skillId);
   }
 
   playMoveSound() {
@@ -141,7 +150,91 @@ class TTSAudioManager {
       console.warn('Unable to persist audio preference', err);
     }
 
+    if (this.enabled) {
+      this.unlockAudioContext();
+    }
+
     return this.enabled;
+  }
+
+  unlockAudioContext() {
+    if (!this.AudioContextClass) {
+      return;
+    }
+
+    const ctx = this.ensureAudioContext();
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+  }
+
+  ensureAudioContext() {
+    if (!this.AudioContextClass) {
+      return null;
+    }
+
+    if (!this.audioContext) {
+      try {
+        this.audioContext = new this.AudioContextClass();
+      } catch (err) {
+        console.warn('Unable to initialise fallback audio context', err);
+        this.audioContext = null;
+        this.AudioContextClass = null;
+        return null;
+      }
+    }
+
+    return this.audioContext;
+  }
+
+  getToneFrequency(text, pitchOffset = 0) {
+    let hash = 0;
+    if (text) {
+      for (let i = 0; i < text.length; i += 1) {
+        hash = (hash + text.charCodeAt(i)) % 48;
+      }
+    }
+    const base = this.toneBaseFrequency || 520;
+    return base + hash * 6 + pitchOffset * 120;
+  }
+
+  playTone(frequency, duration = 0.24, volume = 0.14) {
+    const ctx = this.ensureAudioContext();
+    if (!ctx) {
+      return false;
+    }
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(Math.max(120, frequency), ctx.currentTime);
+
+    const start = ctx.currentTime;
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.linearRampToValueAtTime(Math.max(0.02, volume), start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+
+    oscillator.start(start);
+    oscillator.stop(start + duration + 0.05);
+
+    return true;
+  }
+
+  disableAudioOutput() {
+    this.supported = false;
+    this.enabled = false;
+    this.AudioContextClass = null;
+    this.audioContext = null;
+    this.persistDisabled();
+    this.notifyUnsupported();
   }
 
   isEnabled() {
@@ -153,36 +246,46 @@ class TTSAudioManager {
   }
 
   safeSpeak(text, { rateOffset = 0, pitchOffset = 0 } = {}) {
-    if (!text || !this.supported || !this.enabled) {
+    if (!text || !this.enabled || !this.supported) {
       return;
     }
 
-    try {
-      const speech = typeof window !== 'undefined' ? window.speechSynthesis : null;
-      const Utterance = typeof window !== 'undefined' ? window.SpeechSynthesisUtterance : null;
+    if (this.supportsSpeech) {
+      try {
+        const speech = typeof window !== 'undefined' ? window.speechSynthesis : null;
+        const Utterance = typeof window !== 'undefined' ? window.SpeechSynthesisUtterance : null;
 
-      if (!speech || typeof speech.speak !== 'function' || typeof Utterance !== 'function') {
-        throw new Error('Speech synthesis API unavailable');
+        if (!speech || typeof speech.speak !== 'function' || typeof Utterance !== 'function') {
+          throw new Error('Speech synthesis API unavailable');
+        }
+
+        speech.cancel();
+
+        const utterance = new Utterance(text);
+        utterance.volume = this.volume;
+        utterance.rate = this.rate + rateOffset;
+        utterance.pitch = this.pitch + pitchOffset;
+
+        if (this.voice) {
+          utterance.voice = this.voice;
+        }
+
+        speech.speak(utterance);
+        return;
+      } catch (err) {
+        console.warn('Speech synthesis play failed; using fallback tone', err);
+        this.supportsSpeech = false;
       }
+    }
 
-      speech.cancel();
-
-      const utterance = new Utterance(text);
-      utterance.volume = this.volume;
-      utterance.rate = this.rate + rateOffset;
-      utterance.pitch = this.pitch + pitchOffset;
-
-      if (this.voice) {
-        utterance.voice = this.voice;
-      }
-
-      speech.speak(utterance);
-    } catch (err) {
-      console.warn('Speech synthesis play failed; disabling audio features', err);
-      this.supported = false;
-      this.enabled = false;
-      this.persistDisabled();
-      this.notifyUnsupported();
+    const duration = 0.24 + Math.max(0, rateOffset) * 0.08;
+    const success = this.playTone(
+      this.getToneFrequency(text, pitchOffset),
+      Math.max(0.18, duration),
+      Math.max(0.05, 0.16 + pitchOffset * 0.02)
+    );
+    if (!success) {
+      this.disableAudioOutput();
     }
   }
 
@@ -916,7 +1019,7 @@ function updateAudioToggleButton() {
     elements.audioToggleBtn.textContent = enabled ? '🔊 音效' : '🔇 音效';
   }
 
-  elements.audioToggleBtn.classList.toggle('disabled', !enabled);
+  elements.audioToggleBtn.classList.toggle('disabled', !supported);
   elements.audioToggleBtn.disabled = !supported;
   elements.audioToggleBtn.setAttribute('aria-disabled', (!supported).toString());
 }
